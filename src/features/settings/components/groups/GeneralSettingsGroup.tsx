@@ -42,6 +42,8 @@ interface GeneralSettingsGroupProps {
     setArrowKeySelection: (val: boolean) => void;
     soundVolume: number;
     setSoundVolume: (val: number) => void;
+    recycleBinRetentionDays: number;
+    setRecycleBinRetentionDays: (val: number) => void;
     saveAppSetting: (key: string, val: string) => void;
 }
 
@@ -76,6 +78,8 @@ const GeneralSettingsGroup = ({
     setArrowKeySelection,
     soundVolume,
     setSoundVolume,
+    recycleBinRetentionDays,
+    setRecycleBinRetentionDays,
     saveAppSetting
 }: GeneralSettingsGroupProps) => (
     <div className={`settings-group ${collapsed ? 'collapsed' : ''}`}>
@@ -350,6 +354,29 @@ const GeneralSettingsGroup = ({
                         />
                         <div className="toggle"><div className="left" /><div className="right" /></div>
                     </label>
+                </div>
+
+                <div className="setting-item">
+                    <LabelWithHint
+                        label={t('recycle_bin_retention')}
+                        hint={t('recycle_bin_retention_hint')}
+                        hintKey="recycle_bin_retention"
+                    />
+                    <select
+                        className="setting-select"
+                        value={recycleBinRetentionDays}
+                        onChange={(e) => {
+                            const days = parseInt(e.target.value);
+                            setRecycleBinRetentionDays(days);
+                            saveAppSetting('recycle_bin_retention_days', String(days));
+                        }}
+                    >
+                        <option value={3}>3 {t('days') || '天'}</option>
+                        <option value={5}>5 {t('days') || '天'}</option>
+                        <option value={7}>7 {t('days') || '天'}</option>
+                        <option value={14}>14 {t('days') || '天'}</option>
+                        <option value={30}>30 {t('days') || '天'}</option>
+                    </select>
                 </div>
 
                 {/* macOS cleanup: Removed Restart as Admin */}

@@ -123,7 +123,8 @@ const AdvancedSettingsWindow = () => {
         hideDockIcon: _hideDockIcon,
         setHideDockIcon,
         cloudSyncContentPrefs: _cloudSyncContentPrefs,
-        setCloudSyncContentPrefs
+        setCloudSyncContentPrefs,
+        setRecycleBinRetentionDays
     } = appState;
 
     const tagManagerSizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -224,7 +225,8 @@ const AdvancedSettingsWindow = () => {
         setEmojiPanelTab,
         setEmojiFavorites,
         setHideDockIcon,
-        setCloudSyncContentPrefs
+        setCloudSyncContentPrefs,
+        setRecycleBinRetentionDays
     });
 
     const fetchEffectiveTransferPath = useCallback(() => {

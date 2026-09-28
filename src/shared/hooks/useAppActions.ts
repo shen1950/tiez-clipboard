@@ -7,7 +7,7 @@ interface UseAppActionsOptions {
   cloudSyncEnabled: boolean;
   openConfirm: (opts: { title: string; message: string; onConfirm: () => void }) => void;
   closeConfirm: () => void;
-  pushToast: (msg: string, duration?: number) => number;
+  pushToast: (msg: string, duration?: number, action?: { label: string; onClick: () => void }) => number;
   fetchHistory: (reset?: boolean) => Promise<void>;
 }
 

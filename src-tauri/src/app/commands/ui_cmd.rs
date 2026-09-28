@@ -117,7 +117,7 @@ pub fn set_theme(
         };
 
         let dark_mode = BOOL::from(is_dark);
-        unsafe {
+        let native_corners_applied = unsafe {
             let _ = DwmSetWindowAttribute(
                 hwnd,
                 DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -140,15 +140,22 @@ pub fn set_theme(
             );
             // Keep rounded corners even when border/shadow are disabled.
             let corner_pref = DWM_WINDOW_CORNER_PREFERENCE(DWMWCP_ROUND.0);
-            let _ = DwmSetWindowAttribute(
+            DwmSetWindowAttribute(
                 hwnd,
                 DWMWA_WINDOW_CORNER_PREFERENCE,
                 &corner_pref as *const _ as _,
                 std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
-            );
-        }
+            ).is_ok()
+        };
 
         let build = windows_version::OsVersion::current().build;
+        // Let Windows clip modal scrims at the native frame edge. A second CSS
+        // radius scales with WebView zoom and exposes crescents of the backdrop.
+        let _ = window.eval(if native_corners_applied && build >= 22000 {
+            "document.documentElement.setAttribute('data-native-rounded-window', '')"
+        } else {
+            "document.documentElement.removeAttribute('data-native-rounded-window')"
+        });
         let is_win11 = build >= 22000;
         let is_win10_1803 = build >= 17134;
         let is_win10 = build >= 10240 && build < 22000;

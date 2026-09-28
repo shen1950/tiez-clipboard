@@ -16,7 +16,16 @@ const ToastContainer = ({ toasts }: ToastContainerProps) => (
           exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
           className="toast-item"
         >
-          {toast.msg}
+          <span className="toast-msg">{toast.msg}</span>
+          {toast.action && (
+            <button
+              className="toast-action-btn"
+              onClick={toast.action.onClick}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {toast.action.label}
+            </button>
+          )}
         </motion.div>
       ))}
     </AnimatePresence>

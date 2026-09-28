@@ -176,6 +176,16 @@
   object-fit: contain;
 }
 
+.emoji-fav-broken {
+  padding: 4px;
+  font-size: 10px;
+  color: var(--text-secondary, #8a94a6);
+  text-align: center;
+  word-break: break-all;
+  max-height: 100%;
+  overflow: hidden;
+}
+
 /* Remove button - Clean */
 .emoji-fav-remove {
   position: absolute;

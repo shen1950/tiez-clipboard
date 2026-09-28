@@ -8,6 +8,7 @@ use crate::services::clipboard::{
     build_entry_preview, derive_rich_text_content, truncate_html_for_preview,
 };
 use tauri::{AppHandle, Emitter, State};
+use crate::services::image_preview::prepare_image_preview;
 
 fn normalize_rich_text_item_content(item: &mut ClipboardEntry) {
     if item.content_type != "rich_text" {
@@ -22,6 +23,7 @@ fn normalize_rich_text_item_content(item: &mut ClipboardEntry) {
 
 #[tauri::command]
 pub fn get_clipboard_history(
+    app_handle: AppHandle,
     state: State<'_, DbState>,
     session: State<'_, SessionHistory>,
     limit: i32,
@@ -66,6 +68,7 @@ pub fn get_clipboard_history(
 
     // 5. Truncate content for UI performance
     for item in &mut history {
+        prepare_image_preview(&app_handle, item);
         normalize_rich_text_item_content(item);
 
         if (item.content_type == "text"
@@ -104,6 +107,7 @@ pub fn get_clipboard_history(
 
 #[tauri::command]
 pub fn search_clipboard_history(
+    app_handle: AppHandle,
     state: State<'_, DbState>,
     session: State<'_, SessionHistory>,
     search_term: String,
@@ -137,6 +141,7 @@ pub fn search_clipboard_history(
     }
 
     for item in &mut history {
+        prepare_image_preview(&app_handle, item);
         normalize_rich_text_item_content(item);
 
         if (item.content_type == "text"
@@ -174,28 +179,6 @@ pub fn search_clipboard_history(
 }
 
 #[tauri::command]
-pub fn delete_clipboard_entry(
-    app_handle: AppHandle,
-    state: State<'_, DbState>,
-    session: State<'_, SessionHistory>,
-    app_data: State<'_, AppDataDir>,
-    id: i64,
-) -> AppResult<()> {
-    {
-        let mut session_items = session.inner().0.lock().unwrap();
-        session_items.retain(|item| item.id != id);
-    }
-
-    if id > 0 {
-        let data_dir = app_data.0.lock().unwrap();
-        state.repo.delete(id, Some(&data_dir))?;
-    }
-    let _ = app_handle.emit("clipboard-changed", ());
-    crate::services::cloud_sync::request_cloud_sync(app_handle);
-    Ok(())
-}
-
-#[tauri::command]
 pub fn clear_clipboard_history(
     app_handle: AppHandle,
     state: State<'_, DbState>,
@@ -214,13 +197,14 @@ pub fn clear_clipboard_history(
 }
 
 #[tauri::command]
-pub fn get_tag_items(state: State<'_, DbState>, tag: String) -> AppResult<Vec<ClipboardEntry>> {
+pub fn get_tag_items(app_handle: AppHandle, state: State<'_, DbState>, tag: String) -> AppResult<Vec<ClipboardEntry>> {
     let mut history = state
         .tag_repo
         .get_entries_by_tag(&tag)
         .map_err(AppError::from)?;
 
     for item in &mut history {
+        prepare_image_preview(&app_handle, item);
         normalize_rich_text_item_content(item);
 
         if (item.content_type == "text"

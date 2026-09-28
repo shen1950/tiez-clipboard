@@ -117,6 +117,7 @@ interface UseSettingsPostInitOptions {
   setTagManagerEnabled: (val: boolean) => void;
   setEmojiPanelTab: (val: "emoji" | "favorites") => void;
   setEmojiFavorites: (val: string[]) => void;
+  setRecycleBinRetentionDays: (val: number) => void;
 }
 
 export const useSettingsPostInit = ({
@@ -202,7 +203,8 @@ export const useSettingsPostInit = ({
   setEmojiPanelEnabled,
   setTagManagerEnabled,
   setEmojiPanelTab,
-  setEmojiFavorites
+  setEmojiFavorites,
+  setRecycleBinRetentionDays
 }: UseSettingsPostInitOptions) => {
   useEffect(() => {
     if (!settings) return;
@@ -314,6 +316,10 @@ export const useSettingsPostInit = ({
       } catch (e) {
         console.warn("Invalid app cleanup policies:", e);
       }
+    }
+    if (settings["recycle_bin_retention_days"]) {
+      const days = parseInt(settings["recycle_bin_retention_days"]);
+      if (Number.isFinite(days) && days > 0) setRecycleBinRetentionDays(Math.min(365, Math.max(1, days)));
     }
     setSilentStart(settings["app.silent_start"] !== "false");
     setFollowMouse(settings["app.follow_mouse"] === "true");

@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Serialize)]
 pub struct FileSize {
@@ -127,6 +127,7 @@ pub(crate) fn list_emoji_favorite_paths_in_dir(data_dir: &Path) -> AppResult<Vec
 
 #[tauri::command]
 pub async fn save_emoji_favorite(
+    app: AppHandle,
     app_data: State<'_, AppDataDir>,
     source_path: String,
 ) -> AppResult<String> {
@@ -145,7 +146,9 @@ pub async fn save_emoji_favorite(
     let bytes = std::fs::read(source_path).map_err(AppError::from)?;
 
     let data_dir = app_data.0.lock().unwrap().clone();
-    save_emoji_favorite_bytes_to_dir(&data_dir, &bytes, ext)
+    let saved = save_emoji_favorite_bytes_to_dir(&data_dir, &bytes, ext)?;
+    register_emoji_favorite_paths_with_asset_scope(&app, &[saved.clone()]);
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -170,14 +173,32 @@ pub async fn remove_emoji_favorite(app_data: State<'_, AppDataDir>, path: String
     Ok(())
 }
 
+/// The default asset scope does not cover user-selected data directories;
+/// emoji favorite images must be registered before the webview can load them.
+pub(crate) fn register_emoji_favorite_paths_with_asset_scope(
+    app: &AppHandle,
+    paths: &[String],
+) {
+    let scope = app.asset_protocol_scope();
+    for path in paths {
+        let _ = scope.allow_file(Path::new(path));
+    }
+}
+
 #[tauri::command]
-pub fn list_emoji_favorites(app_data: State<'_, AppDataDir>) -> AppResult<Vec<String>> {
+pub fn list_emoji_favorites(
+    app: AppHandle,
+    app_data: State<'_, AppDataDir>,
+) -> AppResult<Vec<String>> {
     let data_dir = app_data.0.lock().unwrap().clone();
-    list_emoji_favorite_paths_in_dir(&data_dir)
+    let paths = list_emoji_favorite_paths_in_dir(&data_dir)?;
+    register_emoji_favorite_paths_with_asset_scope(&app, &paths);
+    Ok(paths)
 }
 
 #[tauri::command]
 pub async fn save_emoji_favorite_data_url(
+    app: AppHandle,
     app_data: State<'_, AppDataDir>,
     data_url: String,
     file_name: Option<String>,
@@ -212,7 +233,9 @@ pub async fn save_emoji_favorite_data_url(
         .unwrap_or("png");
 
     let data_dir = app_data.0.lock().unwrap().clone();
-    save_emoji_favorite_bytes_to_dir(&data_dir, &bytes, ext)
+    let saved = save_emoji_favorite_bytes_to_dir(&data_dir, &bytes, ext)?;
+    register_emoji_favorite_paths_with_asset_scope(&app, &[saved.clone()]);
+    Ok(saved)
 }
 
 pub(crate) async fn save_emoji_favorite_url_to_dir(
@@ -276,9 +299,12 @@ pub(crate) async fn save_emoji_favorite_url_to_dir(
 
 #[tauri::command]
 pub async fn save_emoji_favorite_url(
+    app: AppHandle,
     app_data: State<'_, AppDataDir>,
     url: String,
 ) -> AppResult<String> {
     let data_dir = app_data.0.lock().unwrap().clone();
-    save_emoji_favorite_url_to_dir(data_dir, url).await
+    let saved = save_emoji_favorite_url_to_dir(data_dir, url).await?;
+    register_emoji_favorite_paths_with_asset_scope(&app, &[saved.clone()]);
+    Ok(saved)
 }

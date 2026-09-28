@@ -49,6 +49,18 @@ const WEBDAV_RETRY_BASE_DELAY_MS: u64 = 600;
 const WEBDAV_HEAD_REBUILD_INTERVAL_SECS: i64 = 5 * 60;
 const WEBDAV_HEAD_FILENAME: &str = "head.json";
 const WEBDAV_BLOB_CACHE_MAX_ENTRIES: usize = 5000;
+const WEBDAV_UPLOADING_TMP_MARKER: &str = ".uploading.";
+const WEBDAV_TMP_SUFFIX: &str = ".tmp";
+// Stale upload temp files are only reaped after this grace period so a temp
+// file another client is currently writing is never deleted.
+const WEBDAV_TMP_GARBAGE_MIN_AGE_MS: i64 = 24 * 60 * 60 * 1000;
+const WEBDAV_TMP_CLEANUP_INTERVAL_SECS: i64 = 24 * 60 * 60;
+const WEBDAV_TMP_CLEANUP_MAX_DELETES: usize = 500;
+// A 507 means the WebDAV quota is exhausted; retrying sooner only piles up
+// more 0-byte temp files until space is freed, so back off much longer than
+// the rate-limit cooldown.
+const WEBDAV_STORAGE_FULL_COOLDOWN_MS: i64 = 30 * 60 * 1000;
+const CLOUD_SYNC_WEBDAV_LAST_TMP_CLEANUP_AT_KEY: &str = "cloud_sync_webdav_last_tmp_cleanup_at";
 
 static CLOUD_SYNC_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CLOUD_SYNC_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -1506,6 +1518,7 @@ fn apply_remote_changes(
                 || item.content_type == "file"
                 || item.content_type == "video",
             pinned_order: item.pinned_order,
+            deleted_at: None,
             file_preview_exists: true,
         };
 
@@ -1569,6 +1582,11 @@ fn check_webdav_status_for_backoff(status: StatusCode) {
     ) {
         // 进入 5 分钟冷却期，避免激怒坚果云导致封禁时间被无限延长
         let cooldown = now_ms() + 300 * 1000;
+        CLOUD_SYNC_BACKOFF_UNTIL.store(cooldown, Ordering::Relaxed);
+    } else if status == StatusCode::INSUFFICIENT_STORAGE {
+        // 配额已满：频繁重试只会不断新增 0 字节临时文件，长冷却等待空间被释放
+        // （临时文件 GC 和用户手动清理后即可恢复）。
+        let cooldown = now_ms() + WEBDAV_STORAGE_FULL_COOLDOWN_MS;
         CLOUD_SYNC_BACKOFF_UNTIL.store(cooldown, Ordering::Relaxed);
     }
 }
@@ -1834,7 +1852,12 @@ async fn upload_webdav_bytes_resource(
     );
     let temp_url = webdav_url_for(cfg, &temp_relative);
 
-    upload_target(client, cfg, &temp_url, &body, content_type, label).await?;
+    if let Err(err) = upload_target(client, cfg, &temp_url, &body, content_type, label).await {
+        // 上传临时文件失败（超时中断/网络错误/507 等）时立即清理，
+        // 否则半截的 .uploading.*.tmp 会永久留在服务器上耗尽配额。
+        let _ = delete_webdav_resource_if_exists(client, cfg, &temp_relative).await;
+        return Err(err);
+    }
 
     match move_webdav_resource(client, cfg, &temp_relative, relative_path).await {
         Ok(true) => Ok(()),
@@ -2059,6 +2082,207 @@ fn parse_webdav_snapshot_ids(xml: &str) -> Vec<String> {
         ids.push(device_id.to_string());
     }
     ids
+}
+
+/// `snapshot.json.uploading.<device_id>.<created_at_ms>.tmp` — the creation
+/// timestamp is embedded in the file name, so no HTTP date parsing is needed.
+fn parse_uploading_tmp_created_at(file_name: &str) -> Option<i64> {
+    let stem = file_name.strip_suffix(WEBDAV_TMP_SUFFIX)?;
+    if !stem.contains(WEBDAV_UPLOADING_TMP_MARKER) {
+        return None;
+    }
+    stem.rsplit('.').next()?.parse::<i64>().ok()
+}
+
+fn parse_webdav_href_file_names(xml: &str) -> Vec<String> {
+    let Ok(re) = Regex::new(r"(?is)<[^>]*href[^>]*>\s*([^<]+)\s*</[^>]*href>") else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    for caps in re.captures_iter(xml) {
+        let Some(raw_match) = caps.get(1) else {
+            continue;
+        };
+        let raw_href = raw_match.as_str().trim();
+        if raw_href.is_empty() {
+            continue;
+        }
+
+        let decoded_href = urlencoding::decode(raw_href)
+            .map(|v| v.into_owned())
+            .unwrap_or_else(|_| raw_href.to_string());
+        let normalized = decoded_href.trim_end_matches('/');
+        let Some(file_name) = normalized.rsplit('/').next() else {
+            continue;
+        };
+        if file_name.is_empty() {
+            continue;
+        }
+        if !names.iter().any(|existing| existing == file_name) {
+            names.push(file_name.to_string());
+        }
+    }
+    names
+}
+
+async fn list_webdav_file_names(
+    client: &Client,
+    cfg: &CloudSyncConfig,
+    dir_relative: &str,
+) -> AppResult<Vec<String>> {
+    let method = Method::from_bytes(b"PROPFIND")
+        .map_err(|e| AppError::Internal(format!("invalid PROPFIND method: {}", e)))?;
+    let url = webdav_collection_url_for(cfg, dir_relative);
+    let body = r#"<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:getlastmodified />
+  </d:prop>
+</d:propfind>"#;
+
+    let resp = webdav_send_with_retry(|| {
+        webdav_with_auth(
+            client
+                .request(method.clone(), &url)
+                .header("Depth", "1")
+                .header("Content-Type", "application/xml; charset=utf-8")
+                .body(body.to_string()),
+            cfg,
+        )
+    })
+    .await?;
+
+    let status = resp.status();
+    if !status.is_success() && status.as_u16() != 207 {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(AppError::Network(format!(
+            "webdav PROPFIND failed: {} {}",
+            status, text
+        )));
+    }
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    Ok(parse_webdav_href_file_names(&text))
+}
+
+/// Blob cache keys are `{url}|{base}|{relative}`; the parent dir of every
+/// cached blob is a `blobs/<prefix>` collection worth sweeping.
+fn webdav_tmp_garbage_blob_dirs(blob_cache: &HashMap<String, i64>) -> Vec<String> {
+    let mut dirs: Vec<String> = Vec::new();
+    for key in blob_cache.keys() {
+        let Some(relative) = key.rsplit('|').next() else {
+            continue;
+        };
+        let Some(file_name) = relative.rsplit('/').next() else {
+            continue;
+        };
+        if !file_name.ends_with(".blob") {
+            continue;
+        }
+        let Some(dir) = relative.strip_suffix(&format!("/{}", file_name)) else {
+            continue;
+        };
+        if dir.is_empty() || dirs.iter().any(|existing| existing == dir) {
+            continue;
+        }
+        dirs.push(dir.to_string());
+    }
+    dirs
+}
+
+async fn cleanup_webdav_tmp_garbage_in_dir(
+    client: &Client,
+    cfg: &CloudSyncConfig,
+    dir_relative: &str,
+    now: i64,
+    budget: usize,
+) -> AppResult<usize> {
+    let names = list_webdav_file_names(client, cfg, dir_relative).await?;
+    let mut deleted = 0usize;
+    for name in names {
+        if deleted >= budget {
+            break;
+        }
+        let Some(created_at) = parse_uploading_tmp_created_at(&name) else {
+            continue;
+        };
+        if now.saturating_sub(created_at) < WEBDAV_TMP_GARBAGE_MIN_AGE_MS {
+            continue;
+        }
+        let relative = if dir_relative.is_empty() {
+            name
+        } else {
+            format!("{}/{}", dir_relative.trim_end_matches('/'), name)
+        };
+        if let Err(err) = delete_webdav_resource_if_exists(client, cfg, &relative).await {
+            crate::warn!("webdav tmp cleanup DELETE failed for {}: {}", relative, err);
+            break;
+        }
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
+/// Reap `.uploading.*.tmp` leftovers from crashed/failed uploads. Runs at most
+/// once a day and never fails the sync: a partial sweep is retried on the next
+/// run because the cleanup timestamp is only advanced on full success.
+async fn maybe_cleanup_webdav_tmp_garbage(
+    app: &AppHandle,
+    client: &Client,
+    cfg: &CloudSyncConfig,
+    paths: &WebDavPaths,
+    blob_cache: &HashMap<String, i64>,
+    now: i64,
+) {
+    let last = get_setting_i64(app, CLOUD_SYNC_WEBDAV_LAST_TMP_CLEANUP_AT_KEY, 0);
+    if !should_run_periodic_snapshot(last, now, WEBDAV_TMP_CLEANUP_INTERVAL_SECS) {
+        return;
+    }
+
+    let mut dirs: Vec<String> = vec![
+        normalize_webdav_base_path(&cfg.webdav_base_path),
+        paths.devices_path.clone(),
+        paths.ops_path.clone(),
+        paths.settings_path.clone(),
+    ];
+    dirs.extend(webdav_tmp_garbage_blob_dirs(blob_cache));
+    dirs.sort();
+    dirs.dedup();
+
+    let mut remaining = WEBDAV_TMP_CLEANUP_MAX_DELETES;
+    let mut total = 0usize;
+    let mut had_error = false;
+    for dir in &dirs {
+        if remaining == 0 {
+            break;
+        }
+        match cleanup_webdav_tmp_garbage_in_dir(client, cfg, dir, now, remaining).await {
+            Ok(deleted) => {
+                total += deleted;
+                remaining -= deleted;
+            }
+            Err(err) => {
+                had_error = true;
+                crate::warn!("webdav tmp cleanup failed for {}: {}", dir, err);
+                break;
+            }
+        }
+    }
+
+    if had_error {
+        return;
+    }
+    set_setting_i64(app, CLOUD_SYNC_WEBDAV_LAST_TMP_CLEANUP_AT_KEY, now_ms());
+    if total > 0 {
+        crate::info!(
+            "webdav tmp cleanup removed {} stale uploading temp file(s)",
+            total
+        );
+    }
 }
 
 async fn upload_webdav_snapshot(
@@ -2894,13 +3118,15 @@ async fn sync_once_webdav(
         return Ok(disabled_status());
     }
     let now = now_ms();
-    let local_items = collect_local_syncable_items(app, &cfg.content_prefs)?;
+    let mut local_items = collect_local_syncable_items(app, &cfg.content_prefs)?;
     let (delta_items, collapsed_index) = collect_local_incremental_items(app, &local_items)?;
     let client = build_http_client()?;
     let paths = ensure_webdav_directories(&client, cfg).await?;
+    let mut webdav_blob_cache = load_webdav_blob_cache(app);
+    // 先清理历史遗留的上传临时文件：配额被垃圾占满时，这是唯一能自愈的路径。
+    maybe_cleanup_webdav_tmp_garbage(app, &client, cfg, &paths, &webdav_blob_cache, now).await;
     let mut sync_head = resolve_webdav_sync_head(app, &client, cfg, &paths, now).await?;
     let mut sync_head_dirty = false;
-    let mut webdav_blob_cache = load_webdav_blob_cache(app);
     let should_pull_snapshot = force_snapshot
         || should_pull_webdav_snapshot(
             app,
@@ -3016,6 +3242,25 @@ async fn sync_once_webdav(
             return Ok(disabled_status());
         }
         let latest_op_seq = get_local_webdav_op_seq(app);
+        // 快照与增量 ops 走同样的 blob 化处理：图片/大文本只保留哈希引用，
+        // 否则全量历史（含 base64 图片）会打包成几十上百 MB 的 JSON 上传，
+        // 极易超时并遗留巨大的临时文件。接收端 enrich_item_blobs_after_pull
+        // 已支持解析这些引用。
+        {
+            let mut snapshot_cache = webdav_blob_cache.clone();
+            process_items_blobs_before_push(
+                &client,
+                cfg,
+                &paths.blobs_path,
+                &mut snapshot_cache,
+                &mut local_items,
+            )
+            .await?;
+            webdav_blob_cache = snapshot_cache;
+            // blob 上传成功后立即落盘缓存，即使随后的快照 PUT 失败，
+            // 下次运行也不会重复上传这些 blob。
+            save_webdav_blob_cache(app, &webdav_blob_cache);
+        }
         upload_webdav_snapshot(
             &client,
             cfg,
@@ -3214,7 +3459,7 @@ pub fn start_cloud_sync_client(app: AppHandle) {
                             running: true,
                             last_sync_at: None,
                             last_error: Some(format!(
-                                "WebDAV Cooldown (JianGuoYun Rate Limit): {}s remaining",
+                                "WebDAV cooldown (rate limit or storage full): {}s remaining",
                                 remaining_secs
                             )),
                             uploaded_items: 0,
@@ -3454,9 +3699,11 @@ fn merge_remote_emojis(app: &AppHandle, remote_json: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_item_for_sync, rewrite_rich_html_resources_for_sync, CloudSyncItem,
+        normalize_item_for_sync, parse_uploading_tmp_created_at,
+        rewrite_rich_html_resources_for_sync, webdav_tmp_garbage_blob_dirs, CloudSyncItem,
         RICH_IMAGE_FALLBACK_PREFIX, RICH_IMAGE_FALLBACK_SUFFIX,
     };
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3532,5 +3779,55 @@ mod tests {
         assert!(!html.contains("entry.png"));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parse_uploading_tmp_created_at_extracts_embedded_timestamp() {
+        assert_eq!(
+            parse_uploading_tmp_created_at("e33d920e.json.uploading.e33d920e.1786718540516.tmp"),
+            Some(1_786_718_540_516)
+        );
+        assert_eq!(
+            parse_uploading_tmp_created_at("head.json.uploading.dev1.123.tmp"),
+            Some(123)
+        );
+        // Regular sync payloads are never garbage.
+        assert_eq!(parse_uploading_tmp_created_at("e33d920e.json"), None);
+        assert_eq!(parse_uploading_tmp_created_at("image_abc.blob"), None);
+        // Marker present but no trailing numeric timestamp: leave it alone.
+        assert_eq!(
+            parse_uploading_tmp_created_at("head.json.uploading.device.tmp"),
+            None
+        );
+        assert_eq!(parse_uploading_tmp_created_at("uploading.123.tmp"), None);
+    }
+
+    #[test]
+    fn webdav_tmp_garbage_blob_dirs_extracts_distinct_blob_parents() {
+        let cache = HashMap::from([
+            (
+                "https://dav.example|tiez-sync|tiez-sync/blobs/35/image_aa.blob".to_string(),
+                1_i64,
+            ),
+            (
+                "https://dav.example|tiez-sync|tiez-sync/blobs/35/image_bb.blob".to_string(),
+                2_i64,
+            ),
+            (
+                "https://dav.example|tiez-sync|tiez-sync/blobs/0f/content_cc.blob".to_string(),
+                3_i64,
+            ),
+            (
+                "https://dav.example|tiez-sync|tiez-sync/ops/dev__1.json".to_string(),
+                4_i64,
+            ),
+        ]);
+
+        let dirs = webdav_tmp_garbage_blob_dirs(&cache);
+        assert!(dirs.contains(&"tiez-sync/blobs/35".to_string()));
+        assert!(dirs.contains(&"tiez-sync/blobs/0f".to_string()));
+        assert_eq!(dirs.len(), 2);
+        // An empty cache yields no sweep targets.
+        assert!(webdav_tmp_garbage_blob_dirs(&HashMap::new()).is_empty());
     }
 }

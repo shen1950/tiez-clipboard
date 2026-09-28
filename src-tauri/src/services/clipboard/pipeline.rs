@@ -172,6 +172,7 @@ impl PipelineStage for DiscoveryStage {
             use_count: 0,
             is_external,
             pinned_order: 0,
+            deleted_at: None,
             file_preview_exists: true,
         });
     }
@@ -592,9 +593,11 @@ impl PipelineStage for DistributionStage {
         }
 
         // Notify
+        let mut ui_entry = truncate_entry_for_ui(entry.clone());
+        crate::services::image_preview::prepare_image_preview(&ctx.app_handle, &mut ui_entry);
         let _ = ctx
             .app_handle
-            .emit("clipboard-updated", truncate_entry_for_ui(entry.clone()));
+            .emit("clipboard-updated", ui_entry);
 
         if settings.persistent.load(Ordering::Relaxed) && entry.id > 0 {
             crate::services::cloud_sync::request_cloud_sync(ctx.app_handle.clone());

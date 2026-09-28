@@ -7,7 +7,7 @@ import type { AiProfile } from "../../features/settings/types";
 interface UseAiActionsOptions {
   aiProfiles: AiProfile[];
   language: string;
-  pushToast: (msg: string, duration?: number) => number;
+  pushToast: (msg: string, duration?: number, action?: { label: string; onClick: () => void }) => number;
   setShowSettings: Dispatch<SetStateAction<boolean>>;
   setProcessingAiId: Dispatch<SetStateAction<number | null>>;
   setHistory: Dispatch<SetStateAction<ClipboardEntry[]>>;

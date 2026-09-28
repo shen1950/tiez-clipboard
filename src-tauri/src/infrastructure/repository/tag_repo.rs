@@ -246,7 +246,7 @@ impl TagRepository for SqliteTagRepository {
             "SELECT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path 
              FROM clipboard_history ch
              INNER JOIN entry_tags et ON ch.id = et.entry_id
-             WHERE et.tag = ? 
+             WHERE et.tag = ? AND ch.deleted_at IS NULL
              ORDER BY ch.is_pinned DESC, ch.pinned_order DESC, ch.timestamp DESC",
         ).map_err(|e| e.to_string())?;
 
@@ -275,6 +275,7 @@ impl TagRepository for SqliteTagRepository {
                     is_external: row.get::<_, i32>(10)? == 1,
                     pinned_order: row.get(11).unwrap_or(0),
                     source_app_path: row.get(12).unwrap_or(None),
+                    deleted_at: None,
                     file_preview_exists: true, // simplified
                 })
             })

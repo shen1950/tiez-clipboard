@@ -15,4 +15,5 @@ export interface ClipboardEntry {
   is_external?: boolean;
   pinned_order?: number;
   file_preview_exists?: boolean;
+  deleted_at?: number | null; // Soft-delete timestamp; null = active, number = in recycle bin
 }

@@ -2323,7 +2323,7 @@ pub fn parse_cf_html(raw: &[u8]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+mod content_classification_tests {
     use super::*;
 
     mod detect_content_type_tests {

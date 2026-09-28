@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -7,7 +7,7 @@ import type { VirtualClipboardListHandle } from "../../features/clipboard/types"
 
 interface UseClipboardActionsOptions {
   t: (key: string) => string;
-  pushToast: (msg: string, duration?: number) => number;
+  pushToast: (msg: string, duration?: number, action?: { label: string; onClick: () => void }) => number;
   deleteAfterPaste: boolean;
   moveToTopAfterPaste: boolean;
   setSearch: (val: string) => void;
@@ -24,6 +24,7 @@ export const useClipboardActions = ({
   setHistory,
   virtualListRef
 }: UseClipboardActionsOptions) => {
+  const deletingIds = useRef(new Set<number>());
   const copyToClipboard = useCallback(
     async (id: number, content: string, contentType: string, pasteWithFormat = false) => {
       try {
@@ -78,17 +79,21 @@ export const useClipboardActions = ({
   const deleteEntry = useCallback(
     async (e: ReactMouseEvent, id: number) => {
       e.stopPropagation();
+      if (deletingIds.current.has(id)) return;
+      deletingIds.current.add(id);
       try {
         await invoke("delete_clipboard_entry", { id });
-        setHistory((prev) => prev.filter((item) => item.id !== id));
+        // Remove only the confirmed item; other cards keep their state and position.
+        // Restoration remains available in the recycle bin without per-item toasts.
+        setHistory(prev => prev.filter(item => item.id !== id));
       } catch (err) {
-        const errorMsg = "删除失败: " + (err?.toString() || "");
-        pushToast(errorMsg, 3000);
+        pushToast(t("delete_failed") + (err?.toString() || ""), 3000);
+      } finally {
+        deletingIds.current.delete(id);
       }
     },
-    [pushToast, setHistory]
+    [pushToast, setHistory, t]
   );
-
   const togglePin = useCallback(
     async (e: ReactMouseEvent, id: number, currentPinned: boolean) => {
       e.stopPropagation();

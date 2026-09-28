@@ -275,4 +275,9 @@ export interface AppState {
   setProcessingAiId: StateSetter<number | null>;
   typeFilter: string | null;
   setTypeFilter: StateSetter<string | null>;
+  // Recycle bin
+  showRecycleBin: boolean;
+  setShowRecycleBin: StateSetter<boolean>;
+  recycleBinRetentionDays: number;
+  setRecycleBinRetentionDays: StateSetter<number>;
 }

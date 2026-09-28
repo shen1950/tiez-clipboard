@@ -10,6 +10,7 @@ import {
   Smile,
   Tag,
   Trash2,
+  ArchiveRestore,
   X
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -27,6 +28,8 @@ interface AppHeaderProps {
   emojiPanelEnabled: boolean;
   chatMode: boolean;
   fileServerEnabled: boolean;
+  showRecycleBin: boolean;
+  setShowRecycleBin: (val: boolean) => void;
   isWindowPinned: boolean;
   setIsWindowPinned: (val: boolean) => void;
   clearHistory: () => void;
@@ -62,6 +65,8 @@ const AppHeader = ({
   emojiPanelEnabled,
   chatMode,
   fileServerEnabled,
+  showRecycleBin,
+  setShowRecycleBin,
   isWindowPinned,
   setIsWindowPinned,
   clearHistory,
@@ -147,6 +152,13 @@ const AppHeader = ({
                 <Smile size={16} />
               </button>
             )}
+            <button
+              className={`btn-icon ${showRecycleBin ? 'active' : ''}`}
+              title={t('recycle_bin')}
+              onClick={() => setShowRecycleBin(!showRecycleBin)}
+            >
+              <ArchiveRestore size={16} />
+            </button>
             <button className="btn-icon" title={t('settings')} onClick={() => setShowSettings(true)}>
               <SettingsIcon size={16} />
             </button>

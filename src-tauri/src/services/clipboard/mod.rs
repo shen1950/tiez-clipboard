@@ -447,8 +447,6 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 
     // Initial state for deduplication and self-copy detection
     let mut last_text = String::new();
-    let last_seq =
-        crate::infrastructure::windows_api::win_clipboard::get_clipboard_sequence_number();
     let mut last_image_hash = 0u64;
 
     // We can initialize these with current content to avoid capturing on startup
@@ -474,7 +472,6 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 
     struct MonitorState {
         last_text: String,
-        last_seq: u32,
         last_image_hash: u64,
         last_content_hash: u64,
         last_process_time: u64,
@@ -482,7 +479,6 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 
     let state = Arc::new(Mutex::new(MonitorState {
         last_text,
-        last_seq,
         last_image_hash,
         last_content_hash: 0,
         last_process_time: 0,
@@ -498,16 +494,11 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 
         // 1. Check for pause
         if crate::CLIPBOARD_MONITOR_PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
-            return;
+            return false;
         }
 
-        // 2. Sequence check (De-bounce Windows firing multiple events for one copy)
-        let current_seq =
-            crate::infrastructure::windows_api::win_clipboard::get_clipboard_sequence_number();
-        if current_seq == monitor_state.last_seq {
-            return;
-        }
-        monitor_state.last_seq = current_seq;
+        // A notification must trigger a read even if its sequence is unchanged:
+        // delayed-rendered formats may only advance the sequence after GetClipboardData.
         let source_snapshot =
             crate::infrastructure::windows_api::window_tracker::get_clipboard_source_app_info();
 
@@ -524,7 +515,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
         // Initialize clipboard for this thread
         let mut clipboard = match Clipboard::new() {
             Ok(cb) => cb,
-            Err(_) => return,
+            Err(_) => return true,
         };
 
         let mut cached_text: Option<Option<String>> = None;
@@ -541,17 +532,20 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
             .as_millis() as u64;
 
         // Calculate hash of current clipboard content
+        let mut has_hashable_content = false;
         let current_content_hash = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
 
             // Hash text content if available
             if let Some(text) = read_clipboard_text_once(&mut clipboard, &mut cached_text) {
+                has_hashable_content = true;
                 normalize_clipboard_plain_text(&text).hash(&mut hasher);
             }
 
             // Also consider image hash if present
             if let Some(image) = read_clipboard_image_once(&mut cached_image) {
+                has_hashable_content = true;
                 image.bytes.hash(&mut hasher);
             }
 
@@ -561,15 +555,13 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
         // If content is identical to last processed content within 2000ms window, skip.
         // Rich text sources (Office/WPS) may fire multiple clipboard events over >500ms
         // because they write formats sequentially and probe_rich_text_payload retries.
-        if current_content_hash == monitor_state.last_content_hash
+        if has_hashable_content
+            && current_content_hash == monitor_state.last_content_hash
             && current_content_hash != 0
             && now.saturating_sub(monitor_state.last_process_time) < 2000
         {
-            return;
+            return false;
         }
-
-        monitor_state.last_content_hash = current_content_hash;
-        monitor_state.last_process_time = now;
 
         let mut handled = false;
 
@@ -932,6 +924,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                     // Slow fallback: read CF_DIB bitmap and encode to PNG
                     if !handled {
                         if let Some(image) = read_clipboard_image_once(&mut cached_image) {
+                            handled = true;
                             use std::hash::{Hash, Hasher};
                             let mut hasher = std::collections::hash_map::DefaultHasher::new();
                             image.bytes.hash(&mut hasher);
@@ -1010,7 +1003,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                         crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst);
                         crate::LAST_APP_SET_HASH_ALT.store(0, Ordering::SeqCst);
                         monitor_state.last_text = normalized_text.clone();
-                        return;
+                        return false;
                     }
 
                     if last_app_hash != 0 {
@@ -1031,9 +1024,17 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                         None,
                         Some(source_snapshot.clone()),
                     );
+                    handled = true;
                 }
             }
         }
+        // Failed/empty reads must not poison content deduplication or consume the
+        // notification permanently. The worker retries with fresh per-attempt caches.
+        if handled && has_hashable_content {
+            monitor_state.last_content_hash = current_content_hash;
+            monitor_state.last_process_time = now;
+        }
+        !handled
     }));
 }
 

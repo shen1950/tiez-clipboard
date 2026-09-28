@@ -12,9 +12,9 @@ export const useOverlays = () => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(emptyConfirm);
 
-  const pushToast = useCallback((msg: string, duration = 3000) => {
+  const pushToast = useCallback((msg: string, duration = 3000, action?: ToastItem["action"]) => {
     const id = Date.now();
-    setToasts((prev) => [...prev, { id, msg }]);
+    setToasts((prev) => [...prev, { id, msg, action }]);
     if (duration > 0) {
       window.setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));

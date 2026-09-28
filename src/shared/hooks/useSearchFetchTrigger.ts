@@ -17,9 +17,5 @@ export const useSearchFetchTrigger = ({
     if (!isComposing) {
       fetchHistory(true);
     }
-  }, [debouncedSearch, isComposing, fetchHistory]);
-
-  useEffect(() => {
-    fetchHistory(true);
-  }, [typeFilter, fetchHistory]);
+  }, [debouncedSearch, isComposing, typeFilter, fetchHistory]);
 };

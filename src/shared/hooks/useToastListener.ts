@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 interface UseToastListenerOptions {
-  pushToast: (msg: string, duration?: number) => number;
+  pushToast: (msg: string, duration?: number, action?: { label: string; onClick: () => void }) => number;
 }
 
 export const useToastListener = ({ pushToast }: UseToastListenerOptions) => {

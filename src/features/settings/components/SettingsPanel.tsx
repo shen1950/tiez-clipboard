@@ -87,6 +87,8 @@ interface SettingsPanelProps {
     setTagManagerEnabled: (val: boolean) => void;
     arrowKeySelection: boolean;
     setArrowKeySelection: (val: boolean) => void;
+    recycleBinRetentionDays: number;
+    setRecycleBinRetentionDays: (val: number) => void;
 
 
     soundEnabled: boolean;
@@ -248,7 +250,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         collapsedGroups, settingsSubpage, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, deleteAfterPaste, moveToTopAfterPaste,
         sequentialMode, sequentialHotkey, isRecordingSequential,
         richPasteHotkey, isRecordingRich, searchHotkey, isRecordingSearch, quickPasteModifier, setQuickPasteModifier,
-        privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules, sensitiveMaskPrefixVisible, setSensitiveMaskPrefixVisible, sensitiveMaskSuffixVisible, setSensitiveMaskSuffixVisible, sensitiveMaskEmailDomain, setSensitiveMaskEmailDomain, cleanupRules, setCleanupRules, appCleanupPolicies, setAppCleanupPolicies, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection,
+        privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules, sensitiveMaskPrefixVisible, setSensitiveMaskPrefixVisible, sensitiveMaskSuffixVisible, setSensitiveMaskSuffixVisible, sensitiveMaskEmailDomain, setSensitiveMaskEmailDomain, cleanupRules, setCleanupRules, appCleanupPolicies, setAppCleanupPolicies, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection, recycleBinRetentionDays, setRecycleBinRetentionDays,
         soundEnabled, setSoundEnabled, pasteSoundEnabled, setPasteSoundEnabled,
         soundVolume, setSoundVolume,
         hideTrayIcon, setHideTrayIcon,
@@ -535,6 +537,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setTagManagerEnabled={setTagManagerEnabled}
                 arrowKeySelection={arrowKeySelection}
                 setArrowKeySelection={setArrowKeySelection}
+                recycleBinRetentionDays={recycleBinRetentionDays}
+                setRecycleBinRetentionDays={setRecycleBinRetentionDays}
                 saveAppSetting={saveAppSetting}
             />
 

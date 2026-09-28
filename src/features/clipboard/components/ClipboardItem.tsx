@@ -723,6 +723,7 @@ const ClipboardItem = ({
     const [localTagInput, setLocalTagInput] = useState(tagInput);
     const [localAiOptionsOpen, setLocalAiOptionsOpen] = useState(!!aiOptionsOpen);
     const [snapshotFailed, setSnapshotFailed] = useState(false);
+    const [failedImageSource, setFailedImageSource] = useState<string | null>(null);
     const [richImageFallbackFailed, setRichImageFallbackFailed] = useState(false);
     const [sourceAppIcon, setSourceAppIcon] = useState<string | null>(() => peekSourceAppIcon(item.source_app_path) ?? null);
     const filePaths = useMemo(
@@ -1719,10 +1720,10 @@ const ClipboardItem = ({
                 <div className={`content-preview ${item.content_type === 'rich_text' ? 'rich-text' : ''} ${item.content_type === 'file' ? 'file-preview' : ''} ${isSensitiveHidden ? 'sensitive-blur' : ''}`}>
                 {item.content_type === "image" ? (
                     <div style={{ position: 'relative' }}>
-                        {item.is_external && item.file_preview_exists === false ? (
+                        {(item.is_external && item.file_preview_exists === false) || failedImageSource === item.content ? (
                             <div className="image-preview error-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', height: '100px', fontSize: '12px' }}>
                                 <ImageOff size={24} style={{ marginBottom: '8px', opacity: 0.5 }} />
-                                <span>{t('image_deleted') || 'Image Deleted'}</span>
+                                <span>{t('image_content')}</span>
                             </div>
                         ) : (
                             <img
@@ -1738,11 +1739,7 @@ const ClipboardItem = ({
                                 className="image-preview"
                                 loading="lazy"
                                 style={isSensitiveHidden ? { filter: 'blur(8px)' } : {}}
-                                onError={(e) => {
-                                    // Fallback for load errors even if backend said it exists (e.g. deleted after fetch)
-                                    e.currentTarget.style.display = 'none';
-                                    e.currentTarget.parentElement?.classList.add('image-load-error');
-                                }}
+                                onError={() => setFailedImageSource(item.content)}
                             />
                         )}
                         {isSensitiveHidden && (

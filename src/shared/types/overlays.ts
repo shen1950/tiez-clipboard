@@ -1,6 +1,7 @@
 export type ToastItem = {
   id: number;
   msg: string;
+  action?: { label: string; onClick: () => void };
 };
 
 export type ConfirmDialogState = {

@@ -92,6 +92,10 @@ export const useAppState = (): AppState => {
   const [colorMode, setColorMode] = useState("system");
   const [showSourceAppIcon, setShowSourceAppIcon] = useState(true);
 
+  // Recycle bin
+  const [showRecycleBin, setShowRecycleBin] = useState(false);
+  const [recycleBinRetentionDays, setRecycleBinRetentionDays] = useState(7);
+
   const [compactMode, setCompactMode] = useState(false);
   const [clipboardItemFontSize, setClipboardItemFontSize] = useState(13);
   const [clipboardTagFontSize, setClipboardTagFontSize] = useState(10);
@@ -434,6 +438,12 @@ export const useAppState = (): AppState => {
     processingAiId,
     setProcessingAiId,
     typeFilter,
-    setTypeFilter
+    setTypeFilter,
+
+    // Recycle bin
+    showRecycleBin,
+    setShowRecycleBin,
+    recycleBinRetentionDays,
+    setRecycleBinRetentionDays
   };
 };

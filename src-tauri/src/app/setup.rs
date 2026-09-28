@@ -9,7 +9,8 @@ use crate::app_state::{
 use crate::database::{self, DbState};
 use crate::global_state::*;
 use crate::info;
-use crate::infrastructure::repository::clipboard_repo::SqliteClipboardRepository;
+use crate::warn;
+use crate::infrastructure::repository::clipboard_repo::{ClipboardRepository, SqliteClipboardRepository};
 use crate::infrastructure::repository::settings_repo::{
     SettingsRepository, SqliteSettingsRepository,
 };
@@ -81,6 +82,45 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         app_handle.clone(),
     )));
     spawn_sensitive_alignment(app_handle.clone());
+
+    // 5.0 Emoji favorites: register saved images with the asset scope so the
+    // webview can load them from a redirected data directory.
+    if let Ok(Some(raw)) = settings_repo
+        .get("app.emoji_favorites")
+        .map(|value| value.filter(|raw| !raw.trim().is_empty() && raw != "[]"))
+    {
+        if let Ok(paths) = serde_json::from_str::<Vec<String>>(&raw) {
+            crate::app::commands::file_cmd::register_emoji_favorite_paths_with_asset_scope(
+                &app_handle,
+                &paths,
+            );
+        }
+    }
+
+    // 5.1 Recycle Bin: purge items past retention on startup
+    {
+        let db_state = app.state::<DbState>();
+        match db_state.repo.get_recycle_bin_count() {
+            Ok(count) if count > 0 => {
+                let retention_days: i64 = settings_repo
+                    .get("recycle_bin_retention_days")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(7);
+                let retention_ms = retention_days * 24 * 60 * 60 * 1000;
+                match db_state.repo.cleanup_expired(retention_ms) {
+                    Ok(n) if n > 0 => {
+                        info!(">>> [STARTUP] Recycle bin: purged {} expired items.", n)
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!(">>> [STARTUP] Recycle bin cleanup failed: {}", e),
+                }
+            }
+            Ok(_) => {}
+            Err(e) => warn!(">>> [STARTUP] Recycle bin count check failed: {}", e),
+        }
+    }
 
     // 6. Window Initialization (Pinned/Focus)
     setup_main_window(app, &settings);

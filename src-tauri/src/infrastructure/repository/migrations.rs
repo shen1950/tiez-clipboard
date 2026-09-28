@@ -207,6 +207,27 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         conn.execute("INSERT INTO schema_migrations (version) VALUES (10)", [])?;
     }
 
+    // Migration 11: Recycle bin support — soft delete timestamp
+    if current_version < 11 {
+        if !has_column(conn, "clipboard_history", "deleted_at")? {
+            conn.execute(
+                "ALTER TABLE clipboard_history ADD COLUMN deleted_at INTEGER",
+                [],
+            )?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_clipboard_history_deleted_at
+                ON clipboard_history (deleted_at)",
+            [],
+        )?;
+        // Default retention: 7 days
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('recycle_bin_retention_days', '7')",
+            [],
+        )?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])?;
+    }
+
     Ok(())
 }
 

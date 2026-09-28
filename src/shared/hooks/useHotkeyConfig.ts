@@ -24,7 +24,7 @@ interface UseHotkeyConfigOptions {
   setIsRecordingSearch: (val: boolean) => void;
   saveAppSetting: (type: string, value: string) => void;
   t: (key: string) => string;
-  pushToast: (msg: string, duration?: number) => number;
+  pushToast: (msg: string, duration?: number, action?: { label: string; onClick: () => void }) => number;
 }
 
 export const useHotkeyConfig = ({

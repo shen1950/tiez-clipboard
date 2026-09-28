@@ -175,6 +175,7 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
   const [isDragging, setIsDragging] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [emojiGroups, setEmojiGroups] = useState<EmojiGroup[]>(FALLBACK_GROUPS);
+  const [brokenFavorites, setBrokenFavorites] = useState<ReadonlySet<string>>(() => new Set());
 
   const flatEmoji = useMemo(() => emojiGroups.flatMap((g) => g.emojis), [emojiGroups]);
   const hasFavorites = favorites.length > 0;
@@ -627,14 +628,21 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
                         title={name}
                         onClick={() => handleSend(path, "image")}
                       >
-                        <img
-                          src={convertFileSrc(path)}
-                          alt={name}
-                          onError={(e) => {
-                            e.currentTarget.onerror = null;
-                            removeFavoritePath(path);
-                          }}
-                        />
+                        {brokenFavorites.has(path) ? (
+                          <span className="emoji-fav-broken">{name}</span>
+                        ) : (
+                          <img
+                            src={convertFileSrc(path)}
+                            alt={name}
+                            onError={() => {
+                              setBrokenFavorites((prev) => {
+                                const next = new Set(prev);
+                                next.add(path);
+                                return next;
+                              });
+                            }}
+                          />
+                        )}
                       </button>
                     </motion.div>
                   );

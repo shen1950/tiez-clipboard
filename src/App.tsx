@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useCallback, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import ToastContainer from "./shared/components/ToastContainer";
@@ -46,6 +47,7 @@ import { useAnnouncements } from "./shared/hooks/useAnnouncements";
 import { useOverlays } from "./shared/hooks/useOverlays";
 import { useAutoUpdate } from "./shared/hooks/useAutoUpdate";
 import UpdateDialog from "./shared/components/UpdateDialog";
+import RecycleBinPanel from "./features/recycle-bin/components/RecycleBinPanel";
 import type { ClipboardEntry } from "./shared/types";
 import type { QuickPasteHint, VirtualClipboardListHandle } from "./features/clipboard/types";
 
@@ -336,7 +338,11 @@ const App = () => {
     processingAiId,
     setProcessingAiId,
     typeFilter,
-    setTypeFilter
+    setTypeFilter,
+    showRecycleBin,
+    setShowRecycleBin,
+    recycleBinRetentionDays,
+    setRecycleBinRetentionDays
   } = appState;
 
   // --- Auto Update Logic ---
@@ -494,19 +500,35 @@ const App = () => {
     [hotkey]
   );
 
-  // Compute all tags when tag manager / tag filter is open, or while editing an item's tags (quick-pick list)
+  // Fetch all tags from the database (not just from loaded history) so the
+  // tag filter dropdown and per-item tag suggestions always show every tag.
+  const [dbAllTags, setDbAllTags] = useState<string[]>([]);
+  const fetchAllTags = useCallback(() => {
+    invoke<Record<string, number>>("get_all_tags_info")
+      .then((tagCounts) => {
+        const tags = [
+          ...new Set([
+            ...BUILTIN_SENSITIVE_TAG_NAMES,
+            ...Object.keys(tagCounts)
+          ])
+        ].sort((a, b) => a.localeCompare(b));
+        setDbAllTags(tags);
+      })
+      .catch(console.error);
+  }, []);
+
+  // Fetch once on mount and re-fetch whenever clipboard history changes
+  useEffect(() => { fetchAllTags(); }, [fetchAllTags]);
+  useEffect(() => {
+    const unlisten = listen("clipboard-changed", () => fetchAllTags());
+    const unlistenRemoved = listen("clipboard-removed", () => fetchAllTags());
+    return () => { unlisten.then((f) => f()); unlistenRemoved.then((f) => f()); };
+  }, [fetchAllTags]);
+
   const allTags = useMemo(() => {
     if (!effectiveShowTagManager && !showTagFilter && editingTagsId === null) return [];
-
-    const set = new Set<string>();
-    for (const tag of BUILTIN_SENSITIVE_TAG_NAMES) {
-      set.add(tag);
-    }
-    history.forEach((item) => {
-      (item.tags || []).forEach((tag) => set.add(tag));
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [history, effectiveShowTagManager, showTagFilter, editingTagsId]);
+    return dbAllTags;
+  }, [dbAllTags, effectiveShowTagManager, showTagFilter, editingTagsId]);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -643,7 +665,8 @@ const App = () => {
     setAiAssignedProfileTask,
     setAiAssignedProfileMouthpiece,
     setAiAssignedProfileTranslate,
-    setSettingsLoaded
+    setSettingsLoaded,
+    setRecycleBinRetentionDays
   });
 
   useEffect(() => {
@@ -1049,6 +1072,8 @@ const App = () => {
         emojiPanelEnabled={emojiPanelEnabled}
         chatMode={chatMode}
         fileServerEnabled={fileServerEnabled}
+        showRecycleBin={showRecycleBin}
+        setShowRecycleBin={setShowRecycleBin}
         isWindowPinned={isWindowPinned}
         setIsWindowPinned={setIsWindowPinned}
         clearHistory={clearHistory}
@@ -1119,6 +1144,15 @@ const App = () => {
           onScrollTop={handleScrollTop}
         />
       </main>
+
+      {showRecycleBin && createPortal(
+        <div className="recycle-bin-overlay" onClick={() => setShowRecycleBin(false)}>
+          <div className="recycle-bin-overlay-content" onClick={(e) => e.stopPropagation()}>
+            <RecycleBinPanel t={t} retentionDays={recycleBinRetentionDays} theme={theme} tagColors={tagColors} />
+          </div>
+        </div>,
+        document.getElementById("root")!
+      )}
 
       <ToastContainer toasts={toasts} />
 

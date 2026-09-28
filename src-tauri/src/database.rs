@@ -539,7 +539,8 @@ mod tests {
                 tags TEXT NOT NULL DEFAULT '[]',
                 use_count INTEGER NOT NULL DEFAULT 0,
                 is_external INTEGER NOT NULL DEFAULT 0,
-                pinned_order INTEGER NOT NULL DEFAULT 0
+                pinned_order INTEGER NOT NULL DEFAULT 0,
+                deleted_at INTEGER
             )",
             [],
         )
@@ -587,6 +588,7 @@ mod tests {
             id: 0,
             content_type: "text".to_string(),
             content: "Hello Integration Test".to_string(),
+            deleted_at: None,
             html_content: None,
             source_app: "TestApp".to_string(),
             source_app_path: Some("/Applications/TestApp.app".to_string()),

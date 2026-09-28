@@ -367,6 +367,7 @@ pub async fn paste_history_item_by_index(
     index: usize,
 ) -> AppResult<bool> {
     let history = crate::app::commands::history_cmd::get_clipboard_history(
+        app_handle.clone(),
         app_handle.state::<DbState>(),
         app_handle.state::<SessionHistory>(),
         (index + 1) as i32,
@@ -1373,6 +1374,7 @@ pub fn paste_latest_rich(app_handle: tauri::AppHandle) {
         };
 
         let history = crate::app::commands::history_cmd::get_clipboard_history(
+            app_handle_clone.clone(),
             app_handle_clone.state::<DbState>(),
             app_handle_clone.state::<SessionHistory>(),
             1,

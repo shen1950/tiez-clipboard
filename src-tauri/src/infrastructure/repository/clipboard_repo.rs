@@ -45,6 +45,14 @@ pub trait ClipboardRepository {
     fn search(&self, query: &str, limit: i32, tag_only: bool) -> Result<Vec<ClipboardEntry>, String>;
     fn delete(&self, id: i64, data_dir: Option<&std::path::Path>) -> Result<(), String>;
     fn clear(&self, data_dir: Option<&std::path::Path>) -> Result<(), String>;
+    // Recycle bin (soft delete)
+    fn soft_delete(&self, id: i64, deleted_at: i64) -> Result<(), String>;
+    fn restore(&self, id: i64) -> Result<(), String>;
+    fn permanent_delete(&self, id: i64, data_dir: Option<&std::path::Path>) -> Result<(), String>;
+    fn get_recycle_bin_items(&self, limit: i32, offset: i32) -> Result<Vec<ClipboardEntry>, String>;
+    fn cleanup_expired(&self, retention_ms: i64) -> Result<i64, String>;
+    fn empty_recycle_bin(&self, data_dir: Option<&std::path::Path>) -> Result<i64, String>;
+    fn get_recycle_bin_count(&self) -> Result<i64, String>;
     fn get_count(&self) -> Result<i64, String>;
     fn increment_use_count(&self, id: i64) -> Result<(), String>;
     fn touch_entry(&self, id: i64, timestamp: i64) -> Result<(), String>;
@@ -672,9 +680,9 @@ impl SqliteClipboardRepository {
         id: i64,
     ) -> Result<Option<ClipboardEntry>, String> {
         let mut stmt = conn.prepare(
-            "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path 
-             FROM clipboard_history 
-             WHERE id = ? 
+            "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
+             FROM clipboard_history
+             WHERE id = ?
              LIMIT 1",
         ).map_err(|e| e.to_string())?;
         let mut rows = stmt.query(params![id]).map_err(|e| e.to_string())?;
@@ -703,6 +711,7 @@ impl SqliteClipboardRepository {
                 is_external: row.get::<_, i32>(10).unwrap_or(0) == 1,
                 pinned_order: row.get(11).unwrap_or(0),
                 source_app_path: row.get(12).unwrap_or(None),
+                deleted_at: row.get(13).unwrap_or(None),
                 file_preview_exists: true,
             }))
         } else {
@@ -867,6 +876,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                     is_external: row.get::<_, i32>(10)? == 1,
                     pinned_order: row.get(11).unwrap_or(0),
                     source_app_path: row.get(12).unwrap_or(None),
+                    deleted_at: row.get(13).unwrap_or(None),
                     // Avoid synchronous filesystem existence checks in history query.
                     // Missing files are still handled by frontend image/file preview error fallback.
                     file_preview_exists: true,
@@ -880,10 +890,10 @@ impl ClipboardRepository for SqliteClipboardRepository {
         let mut mapped_rows = Vec::new();
         if let Some(ct) = content_type {
             let mut stmt = conn.prepare(
-                "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path 
-                 FROM clipboard_history 
-                 WHERE content_type = ? 
-                 ORDER BY is_pinned DESC, pinned_order DESC, timestamp DESC, id DESC 
+                "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
+                 FROM clipboard_history
+                 WHERE content_type = ? AND deleted_at IS NULL
+                 ORDER BY is_pinned DESC, pinned_order DESC, timestamp DESC, id DESC
                  LIMIT ? OFFSET ?",
             ).map_err(|e| e.to_string())?;
             let rows = stmt
@@ -894,9 +904,10 @@ impl ClipboardRepository for SqliteClipboardRepository {
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path 
-                 FROM clipboard_history 
-                 ORDER BY is_pinned DESC, pinned_order DESC, timestamp DESC, id DESC 
+                "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
+                 FROM clipboard_history
+                 WHERE deleted_at IS NULL
+                 ORDER BY is_pinned DESC, pinned_order DESC, timestamp DESC, id DESC
                  LIMIT ? OFFSET ?",
             ).map_err(|e| e.to_string())?;
             let rows = stmt
@@ -954,15 +965,19 @@ impl ClipboardRepository for SqliteClipboardRepository {
                  FROM clipboard_history ch
                  INNER JOIN entry_tags et ON ch.id = et.entry_id
                  WHERE et.tag LIKE '%' || ?1 || '%'
+                   AND ch.deleted_at IS NULL
                  ORDER BY ch.timestamp DESC
                  LIMIT ?2"
             } else {
                 "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
                  FROM clipboard_history ch
                  LEFT JOIN entry_tags et ON ch.id = et.entry_id
-                 WHERE ch.content LIKE '%' || ?1 || '%'
-                    OR ch.source_app LIKE '%' || ?1 || '%'
-                    OR et.tag LIKE '%' || ?1 || '%'
+                 WHERE ch.deleted_at IS NULL
+                   AND (
+                     ch.content LIKE '%' || ?1 || '%'
+                     OR ch.source_app LIKE '%' || ?1 || '%'
+                     OR et.tag LIKE '%' || ?1 || '%'
+                   )
                  ORDER BY ch.timestamp DESC
                  LIMIT ?2"
             };
@@ -987,7 +1002,8 @@ impl ClipboardRepository for SqliteClipboardRepository {
                         is_external: row.get::<_, i32>(10)? == 1,
                         pinned_order: row.get(11).unwrap_or(0),
                         source_app_path: row.get(12).unwrap_or(None),
-                        file_preview_exists: true, // Simplified for search
+                        deleted_at: None,
+                        file_preview_exists: true,
                     })
                 })
                 .map_err(|e| e.to_string())?;
@@ -1025,6 +1041,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                            AND se.tag COLLATE NOCASE IN {}
                      )
                        AND et.tag LIKE '%' || ?1 || '%'
+                       AND ch.deleted_at IS NULL
                      ORDER BY ch.timestamp DESC, ch.id DESC
                      LIMIT ?2",
                     sensitive_tags_sql
@@ -1039,6 +1056,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                          WHERE se.entry_id = ch.id
                            AND se.tag COLLATE NOCASE IN {}
                      )
+                       AND ch.deleted_at IS NULL
                        AND (
                          ch.content LIKE '%' || ?1 || '%'
                          OR ch.source_app LIKE '%' || ?1 || '%'
@@ -1078,6 +1096,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                         is_external: row.get::<_, i32>(10)? == 1,
                         pinned_order: row.get(11).unwrap_or(0),
                         source_app_path: row.get(12).unwrap_or(None),
+                        deleted_at: None,
                         file_preview_exists: true,
                     })
                 })
@@ -1098,18 +1117,19 @@ impl ClipboardRepository for SqliteClipboardRepository {
                 let batch_size = 500;
                 let enc_like = format!("{}%", ENCRYPT_PREFIX);
                 let sql_sensitive = format!(
-                    "SELECT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path 
+                    "SELECT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
                      FROM clipboard_history ch
-                     WHERE (
+                     WHERE ch.deleted_at IS NULL
+                       AND (
                          EXISTS (
-                             SELECT 1 FROM entry_tags se 
-                             WHERE se.entry_id = ch.id 
+                             SELECT 1 FROM entry_tags se
+                             WHERE se.entry_id = ch.id
                                AND se.tag COLLATE NOCASE IN {}
                          )
-                         OR ch.content LIKE ?1 
-                         OR ch.preview LIKE ?1 
+                         OR ch.content LIKE ?1
+                         OR ch.preview LIKE ?1
                          OR ch.html_content LIKE ?1
-                     )
+                       )
                        AND ((ch.timestamp < ?2) OR (ch.timestamp = ?2 AND ch.id < ?3))
                      ORDER BY ch.timestamp DESC, ch.id DESC
                      LIMIT ?4",
@@ -1135,6 +1155,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                                 is_external: row.get::<_, i32>(10)? == 1,
                                 pinned_order: row.get(11).unwrap_or(0),
                                 source_app_path: row.get(12).unwrap_or(None),
+                                deleted_at: None,
                                 file_preview_exists: true,
                             })
                         })
@@ -1199,14 +1220,15 @@ impl ClipboardRepository for SqliteClipboardRepository {
         self.delete_with_conn(&conn, id, data_dir)
     }
 
-    fn clear(&self, data_dir: Option<&std::path::Path>) -> Result<(), String> {
+    fn clear(&self, _data_dir: Option<&std::path::Path>) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = now_ms();
 
         // Get IDs of unpinned items without tags.
         let mut stmt = conn
             .prepare(
-                "SELECT id FROM clipboard_history 
-             WHERE is_pinned = 0 
+                "SELECT id FROM clipboard_history
+             WHERE is_pinned = 0
                AND NOT EXISTS (SELECT 1 FROM entry_tags WHERE entry_id = clipboard_history.id)",
             )
             .map_err(|e| e.to_string())?;
@@ -1215,13 +1237,14 @@ impl ClipboardRepository for SqliteClipboardRepository {
             .map_err(|e| e.to_string())?;
         let ids: Vec<i64> = rows.filter_map(Result::ok).collect();
 
-        // Delete one-by-one so tombstones are recorded for cloud deletion sync.
+        // Soft-delete (move to recycle bin) instead of hard delete.
         for id in &ids {
-            self.delete_with_conn(&conn, *id, data_dir)?;
+            conn.execute(
+                "UPDATE clipboard_history SET deleted_at = ? WHERE id = ?",
+                params![now, id],
+            )
+            .map_err(|e| e.to_string())?;
         }
-
-        // VACUUM to reclaim space
-        let _ = conn.execute_batch("VACUUM;");
         Ok(())
     }
 
@@ -1313,5 +1336,139 @@ impl ClipboardRepository for SqliteClipboardRepository {
     ) -> Result<Option<(String, String, Option<String>)>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         self.get_entry_content_with_html_with_conn(&conn, id)
+    }
+
+    // ---- Recycle bin (soft delete) ----
+
+    fn soft_delete(&self, id: i64, deleted_at: i64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE clipboard_history SET deleted_at = ? WHERE id = ?",
+            params![deleted_at, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn restore(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        // Fetch content_hash + content_type to clear any tombstone created by the soft-delete.
+        let mut stmt = conn
+            .prepare("SELECT content_type, content_hash FROM clipboard_history WHERE id = ?")
+            .map_err(|e| e.to_string())?;
+        let tc: Option<(String, i64)> = stmt
+            .query_row([id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .ok();
+        drop(stmt);
+        if let Some((content_type, content_hash)) = tc {
+            let _ = self.clear_tombstone_with_conn(&conn, &content_type, content_hash);
+        }
+        conn.execute(
+            "UPDATE clipboard_history SET deleted_at = NULL WHERE id = ?",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn permanent_delete(&self, id: i64, data_dir: Option<&std::path::Path>) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        self.delete_with_conn(&conn, id, data_dir)
+    }
+
+    fn get_recycle_bin_items(&self, limit: i32, offset: i32) -> Result<Vec<ClipboardEntry>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, content_type, content, html_content, source_app, timestamp, preview,
+                        is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
+                 FROM clipboard_history
+                 WHERE deleted_at IS NOT NULL
+                 ORDER BY deleted_at DESC
+                 LIMIT ? OFFSET ?",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([limit, offset], |row| {
+                let tags_str: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                let content_type: String = row.get(1)?;
+                let content_raw: String = row.get(2)?;
+                let html_raw: Option<String> = row.get(3).ok();
+                let preview_raw: String = row.get(6)?;
+                let content = self.maybe_decrypt_text(&content_raw);
+                let preview = self.maybe_decrypt_text(&preview_raw);
+                let html_content = html_raw.as_ref().map(|v| self.maybe_decrypt_text(v));
+                Ok(ClipboardEntry {
+                    id: row.get(0)?,
+                    content_type,
+                    content,
+                    html_content,
+                    source_app: row.get(4)?,
+                    timestamp: row.get(5)?,
+                    preview,
+                    is_pinned: row.get::<_, i32>(7)? == 1,
+                    tags,
+                    use_count: row.get(9).unwrap_or(0),
+                    is_external: row.get::<_, i32>(10)? == 1,
+                    pinned_order: row.get(11).unwrap_or(0),
+                    source_app_path: row.get(12).unwrap_or(None),
+                    deleted_at: row.get(13).unwrap_or(None),
+                    file_preview_exists: true,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e: rusqlite::Error| e.to_string())
+    }
+
+    fn cleanup_expired(&self, retention_ms: i64) -> Result<i64, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let cutoff = now_ms() - retention_ms;
+        // Collect expired IDs and their data_dir-relevant info for file cleanup.
+        let mut stmt = conn
+            .prepare("SELECT id FROM clipboard_history WHERE deleted_at IS NOT NULL AND deleted_at < ?")
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<i64> = stmt
+            .query_map([cutoff], |row| row.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+        let count = ids.len() as i64;
+        for id in &ids {
+            let _ = self.delete_with_conn(&conn, *id, None);
+        }
+        Ok(count)
+    }
+
+    fn empty_recycle_bin(&self, data_dir: Option<&std::path::Path>) -> Result<i64, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM clipboard_history WHERE deleted_at IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<i64> = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+        let count = ids.len() as i64;
+        for id in &ids {
+            let _ = self.delete_with_conn(&conn, *id, data_dir);
+        }
+        Ok(count)
+    }
+
+    fn get_recycle_bin_count(&self) -> Result<i64, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM clipboard_history WHERE deleted_at IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let count: i64 = stmt
+            .query_row([], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        Ok(count)
     }
 }
