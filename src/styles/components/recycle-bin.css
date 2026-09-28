@@ -39,7 +39,9 @@
   color: var(--text-primary);
   border: var(--modal-border);
   border-radius: min(var(--modal-radius), 8px);
-  box-shadow: var(--modal-shadow);
+  /* No drop shadow: the scrim and border already separate the card, and a
+     large soft shadow reads as a smudge on the light recycle-bin scrim. */
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;

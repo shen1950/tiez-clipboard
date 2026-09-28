@@ -43,7 +43,7 @@
 
 **内容**：
 
-- 回收站浮层与卡片不再写死样式，改用全局主题 token（`--bg-window`、`--modal-border`、`--modal-radius`、`--modal-shadow`、`--card-radius` 等），深浅色与云母（Mica）等主题下自动同步变化；圆角统一 `min(var(--modal-radius), 8px)`，与主界面卡片一致。
+- 回收站浮层与卡片不再写死样式，改用全局主题 token（`--bg-window`、`--modal-border`、`--modal-radius`、`--card-radius` 等），深浅色与云母（Mica）等主题下自动同步变化；圆角统一 `min(var(--modal-radius), 8px)`，与主界面卡片一致；卡片不带投影——回收站遮罩比标准弹窗更淡，大软阴影投在浅遮罩上显得浑浊，分层交给遮罩、模糊和细边框完成。
 - 遮罩层改为 portal 挂到 `#root`、由主窗口统一裁切，自身不再带圆角。
 - Win11（build ≥ 22000）且 DWM 已应用原生圆角时，Rust 侧给文档根节点打 `data-native-rounded-window` 标记（`ui_cmd.rs`），CSS 据此在回收站遮罩显示期间去掉 root/body/#root 的第二层 CSS 圆角。
 
