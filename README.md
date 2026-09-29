@@ -1,144 +1,79 @@
 # TieZ-GuLing
 
-> Independently versioned personal optimization line of TieZ (fork of [jimuzhe/tiez-clipboard](https://github.com/jimuzhe/tiez-clipboard)).
-> Versioning restarts at **1.0.0** and no longer tracks upstream 0.3.x; upstream serves only as a reference for fixes.
->
-> | Branch | Description |
-> | --- | --- |
-> | `v1.0.0-sep` | Standalone settings window edition (recommended): settings live in their own desktop window, main window is clipboard-only |
-> | `v1.0.0-int` | Integrated edition: settings remain an in-window view; single-window preference / long-open settings on low-RAM machines |
->
-> Documented version: `1.0.0-int`. Data-dir identifier stays `com.tiez.app` for compatibility with existing history.
+**STAY FAST. STAY SYNCED. — A local-first clipboard manager for Windows / macOS (personal optimization line of TieZ)**
 
----
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
-<p align="left">
-  <img src="docs/images/logo.png" width="32" vertical-align="middle" />
-  <b>Making fragmented information flow effortlessly.</b>
-</p>
+> Independently versioned since 1.0.0; no longer tracks upstream TieZ 0.3.x.
+> Data identifier stays `com.tiez.app`, so existing TieZ history carries over seamlessly.
 
----
+## Version series
 
-<div align="center">
-  <img src="docs/images/logo.png" alt="TieZ Hero Logo" width="300" />
-
-  ### **STAY FAST. STAY SYNCED.**
-
-  | STARS | VERSION | LICENSE | PLATFORM |
-  | :--- | :--- | :--- | :--- |
-  | [![Stars](https://img.shields.io/github/stars/jimuzhe/tiez-clipboard?label=STARS&style=for-the-badge&color=4CAF50)](https://github.com/jimuzhe/tiez-clipboard/stargazers) | [![Version](https://img.shields.io/github/v/release/jimuzhe/tiez-clipboard?label=VERSION&style=for-the-badge&color=2196F3)](https://github.com/jimuzhe/tiez-clipboard/releases) | [![License](https://img.shields.io/badge/LICENSE-GPL--3.0-FF9800?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0) | [![Platform](https://img.shields.io/badge/PLATFORM-WIN%20%2F%20MAC-f44336?style=for-the-badge)](https://github.com/jimuzhe/tiez-clipboard/releases) |
-
-  [English](./README.md) | [简体中文](./README.zh-CN.md)
-</div>
-
----
-
-<div align="center">
-
-## Theme Gallery
-
-Explore 4 elegant themes designed for every workspace and efficiency scenarios.
-
-  <table>
-    <tr>
-      <td align="center"><b>Frosted Glass</b><br><img src="docs/images/毛玻璃.png" width="220" /></td>
-      <td align="center"><b>Notebook Style</b><br><img src="docs/images/书.png" width="220" /></td>
-      <td align="center"><b>Sticky Note</b><br><img src="docs/images/便利贴.png" width="220" /></td>
-      <td align="center"><b>3D Interaction</b><br><img src="docs/images/3d.png" width="220" /></td>
-    </tr>
-  </table>
-</div>
-
----
-
-## Why TieZ?
-
-| Performance | Practicality | Privacy | Sync |
-| :--- | :--- | :--- | :--- |
-| **Instant Access**<br>Native listeners and Rust core ensure absolute speed. | **Power Workflows**<br>Rich text, tags, and AI-assisted actions. | **Local & Private**<br>Local-first storage with smart masking for sensitive data in previews. | **Cloud Fluent**<br>Seamless WebDAV and MQTT cross-device sync. |
-
----
-
-## Key Features
-
-### Core Experience
-- **Native Efficiency**: Built with Tauri 2 and Rust for minimum memory footprint.
-- **Smart Capture**: Automatically collects text, rich text (HTML), images, and file paths.
-- **Modern UI**: Supports Mica/Acrylic effects and Dark/Light modes with **4 elegant theme styles**.
-- **Edge Docking**: Automatically hides at the screen edge to stay out of your way.
-
-### Management & Enhancements
-- **Tag System**: Organize your history with custom multi-color tags.
-- **Emoji Library**: Comprehensive built-in emoji management for quick access.
-- **Advanced Settings**: Granular control over cleanup rules and app behavior.
-- **Privacy Masking**: Auto-masks sensitive info like IDs and phone numbers in previews.
-
-### Networking & Transport
-- **WebDAV Sync**: Your data, your cloud. Complete cross-device history.
-- **LAN File Transfer**: Seamlessly move items between devices on the same network.
-- **Verifcation Code Sync**: Instant transfer of OTP codes to your active device.
-- **MQTT Connectivity**: Optimized for real-time synchronization between devices.
-
-### Productivity Tools
-- **External Collaboration**: Open items in external editors with auto-sync back.
-- **Global Search**: Find anything by content, source app, or date.
-- **Sequential Paste**: Optimized workflow for high-frequency copy-paste tasks.
-
----
-
-## Installation
-
-### Platform Support
-| Platform | Requirement | Output |
+| GuLing version | Maps to | Settings form |
 | :--- | :--- | :--- |
-| **Windows** | Windows 10/11 (x86/x64)<br>*(Windows 11 Recommended)* | `.exe` / **`.zip` (Portable)** |
-| **macOS** | Sierra 10.15+ <br>(Apple Silicon / Intel) | `.dmg` |
-| **Linux** | Support Coming Soon | TBD |
+| v0.9.0 | Upstream TieZ 0.3.4 (fork baseline, retroactive tag) | integrated |
+| v0.9.5 | Legacy "v0.3.5" local enhancement set: recycle bin / PixPin capture / WebDAV fixes (retroactive tag) | integrated (overlay recycle bin) |
+| **v1.0.0** | First official release: FTS5 search + on-demand HTML + full-screen recycle bin | **integrated: settings in the main window (this version)** |
+| v1.0.1 | Based on 1.0.0: settings in a standalone desktop window | standalone |
 
-[**Download the Latest Release →**](https://github.com/jimuzhe/tiez-clipboard/releases)
-
----
-
-## Star History
-
-<div align="center">
-  <a href="https://star-history.com/#jimuzhe/tiez-clipboard&Date">
-    <img src="https://api.star-history.com/svg?repos=jimuzhe/tiez-clipboard&type=Date" alt="Star History Chart" width="800" />
-  </a>
-</div>
+This branch / this Release is **v1.0.0 (integrated)**. Prefer a standalone settings window? Get [v1.0.1](../../releases/tag/v1.0.1).
 
 ---
 
-## Community & Support
+## Features
 
-If TieZ makes your life easier, consider supporting the journey.
+### Core
+- Tauri 2 + Rust core; everything stays on-device
+- SQLite **FTS5 (trigram)** full-text search: CJK-substring friendly, sub-millisecond at thousands of rows; filter by source app / tags
+- Captures text / rich text (HTML) / images / file paths; rich-text HTML is lazy-loaded per visible item
+- Auto-capture for PixPin-style "pin & copy" screenshots (delayed-render compatible with bounded retries)
+- Mica / Acrylic materials, dark & light, 4+ themes plus a custom theme store, edge docking
 
-<div align="center">
-  <table style="border: none;">
-    <tr>
-      <td align="center" style="border: none;">
-        <p><strong>WeChat</strong></p>
-        <img src="docs/images/wx.jpeg" alt="WeChat" width="180" height="180" />
-      </td>
-      <td align="center" style="border: none;">
-        <p><strong>Alipay</strong></p>
-        <img src="docs/images/zfb.jpeg" alt="Alipay" width="180" height="180" />
-      </td>
-      <td align="center" style="border: none;">
-        <p><strong>QQ Group</strong></p>
-        <img src="docs/images/qq.jpeg" alt="QQ Group" width="180" height="180" />
-      </td>
-    </tr>
-  </table>
-  <br>
-  <p>Your support keeps the project active and the developer caffeinated!</p>
-  <a href="https://tiez.name666.top/zh/sponsors.html"><strong>View Sponsor List</strong></a>
-</div>
+### Management
+- **Recycle bin**: deletes are soft, retention configurable (3–30 days), restore / permanent delete / empty
+- Multi-color tags, pinning, favorites, notes, emoji library
+- Privacy: sensitive-content masking in previews, optional at-rest encryption
+- AI actions (translate / polish / summarize with self-configured model profiles)
+
+### Sync & network
+- **WebDAV cross-device sync** (temp-file GC, quota-full cooldown, blob-ified snapshots)
+- MQTT verification-code sync; LAN file-transfer chat page
+
+### Paste workflows
+- Sequential paste queue, rich-paste hotkey, quick-paste modifier
+- Default hotkey Alt+C (rebindable; can take over Win+V)
+
+### Theme gallery
+
+| Frosted Glass | Notebook | Sticky Note | 3D |
+| :---: | :---: | :---: | :---: |
+| ![glass](docs/images/毛玻璃.png) | ![book](docs/images/书.png) | ![note](docs/images/便利贴.png) | ![3d](docs/images/3d.png) |
 
 ---
 
-<div align="center">
-  Built with technical precision for every efficient developer.
-  <br>
-  <b>Please consider leaving a Star if you find this project useful.</b>
-</div>
+## Download & run
+
+- Grab `TieZ-GuLing-1.0.0-win-x64.exe` (run directly) or the `.zip` (with README) from Releases.
+- Data lives in `%APPDATA%\com.tiez.app` by default; for portable data put a `datapath.txt` next to the exe containing an absolute path.
+- Unsigned build: choose "More info → Run anyway" on SmartScreen.
+- The built-in updater points at upstream and is inert in this fork; update manually from Releases.
+
+## Build
+
+```bash
+npm install
+npm run tauri:build -- --no-bundle --config <your-identifier.json>
+```
+
+> Always build through `tauri:build` (or with the Tauri CLI env vars). A bare `cargo build --release`
+> produces a dev-mode exe that tries to reach the dev server (ERR_CONNECTION_REFUSED window).
+
+## Changelog vs upstream 0.3.4
+
+See [docs/CHANGES-FROM-UPSTREAM.md](./docs/CHANGES-FROM-UPSTREAM.md) (recycle bin, FTS5, on-demand HTML,
+PixPin capture fix, WebDAV fixes, re-versioning note, …).
+
+## License & credits
+
+GPL-3.0. Based on [TieZ (jimuzhe/tiez-clipboard)](https://github.com/jimuzhe/tiez-clipboard) — thanks to the original author.
+Architecture lineage: EcoPaste family (Tauri 2 + React 19); FTS5 idea also informed by KwikPaste.
