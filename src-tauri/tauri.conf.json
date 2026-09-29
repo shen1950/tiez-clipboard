@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TieZ",
-  "version": "0.3.5",
+  "productName": "TieZ-GuLing",
+  "version": "1.0.0-sep",
   "identifier": "com.tiez.app",
   "plugins": {
     "updater": {
@@ -20,7 +20,7 @@
   "app": {
     "windows": [
       {
-        "title": "TieZ",
+        "title": "TieZ-GuLing",
         "label": "main",
         "width": 352,
         "height": 380,

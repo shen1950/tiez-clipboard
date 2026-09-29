@@ -1,7 +1,7 @@
 {
-  "name": "tiez-app",
+  "name": "tiez-guling",
   "private": true,
-  "version": "0.3.5",
+  "version": "1.0.0-sep",
   "type": "module",
   "scripts": {
     "dev": "vite",

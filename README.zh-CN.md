@@ -1,3 +1,17 @@
+# TieZ-GuLing
+
+> 独立编号的 TieZ 个人优化线（fork 自 [jimuzhe/tiez-clipboard](https://github.com/jimuzhe/tiez-clipboard)）。
+> 版本自 **1.0.0** 起独立编号，不再跟随上游 0.3.x；上游仅作为安全/功能修复的参考来源。
+>
+> | 分支 | 说明 |
+> | --- | --- |
+> | `v1.0.0-sep` | 设置独立窗口版（推荐）：设置界面为独立桌面窗口，主窗口只做剪贴板 |
+> | `v1.0.0-int` | 设置一体版：设置仍在主窗口内切换，单窗口党/低内存长开设置场景 |
+>
+> 当前文档版本：`1.0.0-sep`。数据目录 identifier 保持 `com.tiez.app` 以兼容既有历史数据。
+
+---
+
 <p align="left">
   <img src="docs/images/logo.png" width="32" vertical-align="middle" />
   <b>让碎片化信息轻松流转的剪贴板工具</b>

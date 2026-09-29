@@ -1037,14 +1037,14 @@ fn setup_tray(app: &App, hide_tray: bool) {
     use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
     let show_i = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>).unwrap();
-    let quit_i = MenuItem::with_id(app, "quit", "退出 贴汁", true, None::<&str>).unwrap();
+    let quit_i = MenuItem::with_id(app, "quit", "退出 TieZ-GuLing", true, None::<&str>).unwrap();
     let menu = Menu::with_items(app, &[&show_i, &quit_i]).unwrap();
     let icon =
         tauri::image::Image::from_bytes(include_bytes!("../../icons/tray-icon.png")).unwrap();
 
     let tray = TrayIconBuilder::with_id("main_tray")
         .icon(icon)
-        .tooltip("TieZ")
+        .tooltip("TieZ-GuLing")
         .show_menu_on_left_click(false)
         .menu(&menu)
         .on_menu_event(|app, event| {

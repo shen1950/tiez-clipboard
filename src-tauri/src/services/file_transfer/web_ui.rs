@@ -329,7 +329,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
-    <title>TieZ 终端传输</title>
+    <title>TieZ-GuLing 终端传输</title>
     <style>
         * {{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
         
