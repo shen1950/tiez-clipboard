@@ -1,3 +1,17 @@
+# TieZ-GuLing
+
+> Independently versioned personal optimization line of TieZ (fork of [jimuzhe/tiez-clipboard](https://github.com/jimuzhe/tiez-clipboard)).
+> Versioning restarts at **1.0.0** and no longer tracks upstream 0.3.x; upstream serves only as a reference for fixes.
+>
+> | Branch | Description |
+> | --- | --- |
+> | `v1.0.0-sep` | Standalone settings window edition (recommended): settings live in their own desktop window, main window is clipboard-only |
+> | `v1.0.0-int` | Integrated edition: settings remain an in-window view; single-window preference / long-open settings on low-RAM machines |
+>
+> Documented version: `1.0.0-int`. Data-dir identifier stays `com.tiez.app` for compatibility with existing history.
+
+---
+
 <p align="left">
   <img src="docs/images/logo.png" width="32" vertical-align="middle" />
   <b>Making fragmented information flow effortlessly.</b>
