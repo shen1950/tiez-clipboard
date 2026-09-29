@@ -1,50 +1,16 @@
-/* DWM owns the physical window corners on Windows 11. Do not cut out a
-   second, zoom-scaled curve while the recycle-bin scrim covers the window. */
-:root[data-native-rounded-window]:has(.recycle-bin-overlay),
-:root[data-native-rounded-window] body:has(.recycle-bin-overlay),
-:root[data-native-rounded-window] #root:has(> .recycle-bin-overlay) {
+/* DWM owns the physical window corners on Windows 11. While the recycle-bin
+   view fills the window, drop the second, zoom-scaled CSS radius so the view
+   background reaches the real window edge and native corners clip it. */
+:root[data-native-rounded-window]:has(.recycle-bin-view),
+:root[data-native-rounded-window] body:has(.recycle-bin-view),
+:root[data-native-rounded-window] #root:has(.recycle-bin-view) {
   border-radius: 0;
 }
 
-/* Keep the scrim inside the window shell, outside the content's rounded clip. */
-#root:has(> .recycle-bin-overlay) {
-  position: relative;
-}
-
-/* Override theme rules that position all root children relatively. */
-:root #root > .recycle-bin-overlay {
-  position: absolute;
-  z-index: 1000;
-}
-
-/* Recycle Bin */
-.recycle-bin-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(8, 12, 18, 0.32);
-  backdrop-filter: blur(10px) saturate(115%);
-  -webkit-backdrop-filter: blur(10px) saturate(115%);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.recycle-bin-overlay-content {
-  width: 90%;
-  max-width: 480px;
-  max-height: 80%;
-  /* Follow the same theme tokens as the other application dialogs. */
-  background: var(--bg-window);
-  color: var(--text-primary);
-  border: var(--modal-border);
-  border-radius: min(var(--modal-radius), 8px);
-  /* No drop shadow: the scrim and border already separate the card, and a
-     large soft shadow reads as a smudge on the light recycle-bin scrim. */
-  box-shadow: none;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+/* Full-window view: rendered as a replacement of the main content (like
+   settings / tag manager), so nothing shows through around it. */
+.recycle-bin-view {
+  height: 100%;
 }
 
 .recycle-bin-panel {
@@ -71,6 +37,12 @@
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 10px;
+}
+
+.recycle-bin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .retention-info {

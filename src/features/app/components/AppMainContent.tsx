@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentProps, RefObject, ReactNode } from "react";
+import type { RefObject, ReactNode } from "react";
 import { motion, Reorder, useDragControls } from "framer-motion";
 import type { DragControls } from "framer-motion";
 import { ArrowUp, Clipboard } from "lucide-react";
 import FileTransferChatView from "../../file-transfer/components/FileTransferChatView";
-import SettingsPanel from "../../settings/components/SettingsPanel";
 import TagManager from "../../tag/components/TagManager";
 import EmojiPanel from "../../emoji/components/EmojiPanel";
+import RecycleBinPanel from "../../recycle-bin/components/RecycleBinPanel";
 import { VirtualClipboardList } from "../../clipboard/components/VirtualClipboardList";
 import type { ClipboardEntry } from "../../../shared/types";
 import type { VirtualClipboardListHandle } from "../../clipboard/types";
 
-type SettingsPanelProps = ComponentProps<typeof SettingsPanel>;
 type RenderItem = (
   item: ClipboardEntry,
   index: number,
@@ -22,14 +21,16 @@ type RenderItem = (
 interface AppMainContentProps {
   t: (key: string) => string;
   theme: string;
-  showSettings: boolean;
   showTagManager: boolean;
   tagManagerEnabled: boolean;
   showEmojiPanel: boolean;
+  showRecycleBin: boolean;
+  recycleBinRetentionDays: number;
+  onCloseRecycleBin: () => void;
+  tagColors: Record<string, string>;
   chatMode: boolean;
   localIp: string;
   actualPort: string;
-  settingsPanelProps: SettingsPanelProps;
   emojiFavorites: string[];
   setEmojiFavorites: (val: string[] | ((prev: string[]) => string[])) => void;
   emojiPanelTab: "emoji" | "favorites";
@@ -95,14 +96,16 @@ const SortableItem = ({
 const AppMainContent = ({
   t,
   theme,
-  showSettings,
   showTagManager,
   tagManagerEnabled,
   showEmojiPanel,
+  showRecycleBin,
+  recycleBinRetentionDays,
+  onCloseRecycleBin,
+  tagColors,
   chatMode,
   localIp,
   actualPort,
-  settingsPanelProps,
   emojiFavorites,
   setEmojiFavorites,
   emojiPanelTab,
@@ -220,35 +223,32 @@ const AppMainContent = ({
     );
   }
 
-  if (showSettings) {
-    if (chatMode) {
-      return (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          style={{ height: "100%", overflow: "hidden" }}
-        >
-          <FileTransferChatView t={t} localIp={localIp} actualPort={actualPort} />
-        </motion.div>
-      );
-    }
+  if (chatMode) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        style={{ height: "100%", overflow: "hidden" }}
+      >
+        <FileTransferChatView t={t} localIp={localIp} actualPort={actualPort} />
+      </motion.div>
+    );
+  }
 
+  if (showRecycleBin) {
     return (
       <motion.div
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
-        className={`settings-view ${settingsPanelProps.settingsSubpage === "advanced" ? "advanced-view-shell" : ""}`}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: settingsPanelProps.settingsSubpage === "advanced" ? "0" : "12px",
-          height: "100%",
-          maxHeight: "100%",
-          width: "100%",
-          maxWidth: settingsPanelProps.settingsSubpage === "advanced" ? "none" : undefined
-        }}
+        style={{ height: "100%", overflow: "hidden" }}
       >
-        <SettingsPanel {...settingsPanelProps} />
+        <RecycleBinPanel
+          t={t}
+          retentionDays={recycleBinRetentionDays}
+          theme={theme}
+          tagColors={tagColors}
+          onClose={onCloseRecycleBin}
+        />
       </motion.div>
     );
   }

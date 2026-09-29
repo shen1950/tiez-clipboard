@@ -30,6 +30,14 @@ fn is_syncable_content_type(content_type: &str) -> bool {
     )
 }
 
+fn sensitive_tags_sql_clause() -> String {
+    let parts: Vec<String> = crate::database::SENSITIVE_TAGS
+        .iter()
+        .map(|t| format!("'{}'", t.replace('\'', "''")))
+        .collect();
+    format!("({})", parts.join(","))
+}
+
 pub trait ClipboardRepository {
     fn save(
         &self,
@@ -831,6 +839,251 @@ impl SqliteClipboardRepository {
             Ok(None)
         }
     }
+
+    // --- Search helpers -----------------------------------------------------
+    // List/search responses intentionally omit html_content: rich-text HTML
+    // snapshots dominate storage while the list only renders text previews.
+    // Copy/paste paths refetch full content (incl. HTML) from the backend by id.
+
+    const SEARCH_COLUMNS: &'static str = "ch.id, ch.content_type, ch.content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path";
+
+    fn map_search_row(&self, row: &rusqlite::Row) -> rusqlite::Result<ClipboardEntry> {
+        let tags_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
+        let content_raw: String = row.get(2)?;
+        let preview_raw: String = row.get(5)?;
+        Ok(ClipboardEntry {
+            id: row.get(0)?,
+            content_type: row.get(1)?,
+            content: self.maybe_decrypt_text(&content_raw),
+            html_content: None,
+            source_app: row.get(3)?,
+            timestamp: row.get(4)?,
+            preview: self.maybe_decrypt_text(&preview_raw),
+            is_pinned: row.get::<_, i32>(6)? == 1,
+            tags: serde_json::from_str(&tags_str).unwrap_or_default(),
+            use_count: row.get(8).unwrap_or(0),
+            is_external: row.get::<_, i32>(9)? == 1,
+            pinned_order: row.get(10).unwrap_or(0),
+            source_app_path: row.get(11).unwrap_or(None),
+            deleted_at: None,
+            file_preview_exists: true,
+        })
+    }
+
+    /// FTS5 trigram fast path (substring semantics, CJK friendly).
+    /// Errors when the clipboard_fts index is unavailable so callers fall back to LIKE.
+    fn search_fts(
+        &self,
+        conn: &Connection,
+        term: &str,
+        limit: i32,
+    ) -> Result<Vec<ClipboardEntry>, String> {
+        // Quoted FTS5 phrase = literal substring match under the trigram tokenizer.
+        let phrase = format!("\"{}\"", term.replace('"', "\"\""));
+
+        #[cfg(feature = "portable")]
+        let sql = format!(
+            "SELECT {} FROM clipboard_fts
+             JOIN clipboard_history ch ON ch.id = clipboard_fts.rowid
+             WHERE clipboard_fts MATCH ?1
+               AND ch.deleted_at IS NULL
+             ORDER BY ch.timestamp DESC, ch.id DESC
+             LIMIT ?2",
+            Self::SEARCH_COLUMNS
+        );
+        #[cfg(not(feature = "portable"))]
+        let sql = format!(
+            "SELECT {} FROM clipboard_fts
+             JOIN clipboard_history ch ON ch.id = clipboard_fts.rowid
+             WHERE clipboard_fts MATCH ?1
+               AND ch.deleted_at IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM entry_tags se
+                   WHERE se.entry_id = ch.id
+                     AND se.tag COLLATE NOCASE IN {}
+               )
+             ORDER BY ch.timestamp DESC, ch.id DESC
+             LIMIT ?2",
+            Self::SEARCH_COLUMNS,
+            sensitive_tags_sql_clause()
+        );
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![phrase, limit], |row| self.map_search_row(row))
+            .map_err(|e| e.to_string())?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(results)
+    }
+
+    /// LIKE-based search (fallback for short queries, tag-only search, or missing FTS index).
+    fn search_like(
+        &self,
+        conn: &Connection,
+        term: &str,
+        limit: i32,
+        tag_only: bool,
+    ) -> Result<Vec<ClipboardEntry>, String> {
+        #[cfg(feature = "portable")]
+        let sql = if tag_only {
+            format!(
+                "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
+                 FROM clipboard_history ch
+                 INNER JOIN entry_tags et ON ch.id = et.entry_id
+                 WHERE et.tag LIKE '%' || ?1 || '%'
+                   AND ch.deleted_at IS NULL
+                 ORDER BY ch.timestamp DESC
+                 LIMIT ?2"
+            )
+        } else {
+            format!(
+                "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
+                 FROM clipboard_history ch
+                 LEFT JOIN entry_tags et ON ch.id = et.entry_id
+                 WHERE ch.deleted_at IS NULL
+                   AND (
+                     ch.content LIKE '%' || ?1 || '%'
+                     OR ch.source_app LIKE '%' || ?1 || '%'
+                     OR et.tag LIKE '%' || ?1 || '%'
+                   )
+                 ORDER BY ch.timestamp DESC
+                 LIMIT ?2"
+            )
+        };
+
+        #[cfg(not(feature = "portable"))]
+        let sql = if tag_only {
+            format!(
+                "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
+                 FROM clipboard_history ch
+                 INNER JOIN entry_tags et ON ch.id = et.entry_id
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM entry_tags se
+                     WHERE se.entry_id = ch.id
+                       AND se.tag COLLATE NOCASE IN {}
+                 )
+                   AND et.tag LIKE '%' || ?1 || '%'
+                   AND ch.deleted_at IS NULL
+                 ORDER BY ch.timestamp DESC, ch.id DESC
+                 LIMIT ?2",
+                sensitive_tags_sql_clause()
+            )
+        } else {
+            format!(
+                "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
+                 FROM clipboard_history ch
+                 LEFT JOIN entry_tags et ON ch.id = et.entry_id
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM entry_tags se
+                     WHERE se.entry_id = ch.id
+                       AND se.tag COLLATE NOCASE IN {}
+                 )
+                   AND ch.deleted_at IS NULL
+                   AND (
+                     ch.content LIKE '%' || ?1 || '%'
+                     OR ch.source_app LIKE '%' || ?1 || '%'
+                     OR et.tag LIKE '%' || ?1 || '%'
+                   )
+                 ORDER BY ch.timestamp DESC, ch.id DESC
+                 LIMIT ?2",
+                sensitive_tags_sql_clause()
+            )
+        };
+
+        // Column order matches map_search_row (12 columns, no html_content).
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![term, limit], |row| self.map_search_row(row))
+            .map_err(|e| e.to_string())?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(results)
+    }
+
+    /// Decrypt-scan for sensitive/encrypted entries that SQL cannot match (non-portable builds).
+    /// Appends matches to `results` until `limit` is reached.
+    #[cfg(not(feature = "portable"))]
+    fn search_encrypted_scan(
+        &self,
+        conn: &Connection,
+        term: &str,
+        limit: i32,
+        results: &mut Vec<ClipboardEntry>,
+        seen: &mut HashSet<i64>,
+    ) -> Result<(), String> {
+        let mut cursor_ts = i64::MAX;
+        let mut cursor_id = i64::MAX;
+        let batch_size = 500;
+        let enc_like = format!("{}%", ENCRYPT_PREFIX);
+        let sql_sensitive = format!(
+            "SELECT ch.id, ch.content_type, ch.content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
+             FROM clipboard_history ch
+             WHERE ch.deleted_at IS NULL
+               AND (
+                 EXISTS (
+                     SELECT 1 FROM entry_tags se
+                     WHERE se.entry_id = ch.id
+                       AND se.tag COLLATE NOCASE IN {}
+                 )
+                 OR ch.content LIKE ?1
+                 OR ch.preview LIKE ?1
+               )
+               AND ((ch.timestamp < ?2) OR (ch.timestamp = ?2 AND ch.id < ?3))
+             ORDER BY ch.timestamp DESC, ch.id DESC
+             LIMIT ?4",
+            sensitive_tags_sql_clause()
+        );
+
+        loop {
+            let mut stmt = conn.prepare(&sql_sensitive).map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![enc_like, cursor_ts, cursor_id, batch_size], |row| {
+                    self.map_search_row(row)
+                })
+                .map_err(|e| e.to_string())?;
+
+            let mut batch: Vec<ClipboardEntry> = Vec::new();
+            for row in rows {
+                if let Ok(entry) = row {
+                    batch.push(entry);
+                }
+            }
+
+            if batch.is_empty() {
+                break;
+            }
+
+            for entry in batch.iter() {
+                let matches = entry.content.to_lowercase().contains(term)
+                    || entry.source_app.to_lowercase().contains(term)
+                    || entry.tags.iter().any(|t| t.to_lowercase().contains(term));
+
+                if matches && seen.insert(entry.id) {
+                    results.push(entry.clone());
+                    if results.len() >= limit as usize {
+                        break;
+                    }
+                }
+            }
+
+            if results.len() >= limit as usize {
+                break;
+            }
+
+            if let Some(last) = batch.last() {
+                cursor_ts = last.timestamp;
+                cursor_id = last.id;
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ClipboardRepository for SqliteClipboardRepository {
@@ -850,47 +1103,47 @@ impl ClipboardRepository for SqliteClipboardRepository {
         content_type: Option<&str>,
     ) -> Result<Vec<ClipboardEntry>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        // List responses omit html_content (rich-text HTML snapshots dominate storage).
+        // The frontend renders text previews and lazily fetches HTML per visible item
+        // via get_entry_html; copy/paste refetch full content by id in the backend.
         let map_row = |row: &rusqlite::Row| {
-            let tags_str: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
+            let tags_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
             let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
             let content_type: String = row.get(1)?;
             let content_raw: String = row.get(2)?;
-            let html_raw: Option<String> = row.get(3).ok();
-            let preview_raw: String = row.get(6)?;
+            let preview_raw: String = row.get(5)?;
             let content = self.maybe_decrypt_text(&content_raw);
             let preview = self.maybe_decrypt_text(&preview_raw);
-            let html_content = html_raw.as_ref().map(|v| self.maybe_decrypt_text(v));
 
             Ok((
                 ClipboardEntry {
                     id: row.get(0)?,
                     content_type,
                     content,
-                    html_content,
-                    source_app: row.get(4)?,
-                    timestamp: row.get(5)?,
+                    html_content: None,
+                    source_app: row.get(3)?,
+                    timestamp: row.get(4)?,
                     preview,
-                    is_pinned: row.get::<_, i32>(7)? == 1,
+                    is_pinned: row.get::<_, i32>(6)? == 1,
                     tags,
-                    use_count: row.get(9).unwrap_or(0),
-                    is_external: row.get::<_, i32>(10)? == 1,
-                    pinned_order: row.get(11).unwrap_or(0),
-                    source_app_path: row.get(12).unwrap_or(None),
-                    deleted_at: row.get(13).unwrap_or(None),
+                    use_count: row.get(8).unwrap_or(0),
+                    is_external: row.get::<_, i32>(9)? == 1,
+                    pinned_order: row.get(10).unwrap_or(0),
+                    source_app_path: row.get(11).unwrap_or(None),
+                    deleted_at: row.get(12).unwrap_or(None),
                     // Avoid synchronous filesystem existence checks in history query.
                     // Missing files are still handled by frontend image/file preview error fallback.
                     file_preview_exists: true,
                 },
                 content_raw,
                 preview_raw,
-                html_raw,
             ))
         };
 
         let mut mapped_rows = Vec::new();
         if let Some(ct) = content_type {
             let mut stmt = conn.prepare(
-                "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
+                "SELECT id, content_type, content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
                  FROM clipboard_history
                  WHERE content_type = ? AND deleted_at IS NULL
                  ORDER BY is_pinned DESC, pinned_order DESC, timestamp DESC, id DESC
@@ -904,7 +1157,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id, content_type, content, html_content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
+                "SELECT id, content_type, content, source_app, timestamp, preview, is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
                  FROM clipboard_history
                  WHERE deleted_at IS NULL
                  ORDER BY is_pinned DESC, pinned_order DESC, timestamp DESC, id DESC
@@ -919,26 +1172,18 @@ impl ClipboardRepository for SqliteClipboardRepository {
         }
 
         let mut history = Vec::new();
-        for (entry, content_raw, preview_raw, html_raw) in mapped_rows {
+        for (entry, content_raw, preview_raw) in mapped_rows {
             #[cfg(not(feature = "portable"))]
             {
                 let is_sensitive = has_sensitive_tag(&entry.tags);
                 let content_encrypted = content_raw.starts_with(ENCRYPT_PREFIX);
                 let preview_encrypted = preview_raw.starts_with(ENCRYPT_PREFIX);
-                let html_encrypted = html_raw
-                    .as_ref()
-                    .map(|h| h.starts_with(ENCRYPT_PREFIX))
-                    .unwrap_or(false);
-                let html_needs_encrypt = html_raw
-                    .as_ref()
-                    .map(|h| !h.starts_with(ENCRYPT_PREFIX))
-                    .unwrap_or(false);
 
-                if is_sensitive && (!content_encrypted || !preview_encrypted || html_needs_encrypt)
+                if is_sensitive && (!content_encrypted || !preview_encrypted)
                 {
+                    // encrypt_entry_with_conn covers html_content as well
                     let _ = self.encrypt_entry_with_conn(&conn, entry.id);
-                } else if !is_sensitive
-                    && (content_encrypted || preview_encrypted || html_encrypted)
+                } else if !is_sensitive && (content_encrypted || preview_encrypted)
                 {
                     let _ = self.decrypt_entry_with_conn(&conn, entry.id);
                 }
@@ -957,262 +1202,47 @@ impl ClipboardRepository for SqliteClipboardRepository {
             return Ok(Vec::new());
         }
 
-        #[cfg(feature = "portable")]
-        {
-            // Portable version: Data is NOT encrypted, use conventional SQL LIKE search (fastest)
-            let sql = if tag_only {
-                "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
-                 FROM clipboard_history ch
-                 INNER JOIN entry_tags et ON ch.id = et.entry_id
-                 WHERE et.tag LIKE '%' || ?1 || '%'
-                   AND ch.deleted_at IS NULL
-                 ORDER BY ch.timestamp DESC
-                 LIMIT ?2"
-            } else {
-                "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
-                 FROM clipboard_history ch
-                 LEFT JOIN entry_tags et ON ch.id = et.entry_id
-                 WHERE ch.deleted_at IS NULL
-                   AND (
-                     ch.content LIKE '%' || ?1 || '%'
-                     OR ch.source_app LIKE '%' || ?1 || '%'
-                     OR et.tag LIKE '%' || ?1 || '%'
-                   )
-                 ORDER BY ch.timestamp DESC
-                 LIMIT ?2"
-            };
+        // FTS5 trigram fast path (requires >= 3 chars for substring matching).
+        // Falls through to LIKE when the index is unavailable, the query is too
+        // short, or FTS yields nothing (safety net against an empty/stale index).
+        if !tag_only && term.chars().count() >= 3 {
+            if let Ok(results) = self.search_fts(&conn, &term, limit) {
+                if !results.is_empty() {
+                    #[cfg(feature = "portable")]
+                    return Ok(results);
 
-            let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-
-            let rows = stmt
-                .query_map(params![term, limit], |row| {
-                    let tags_str: String =
-                        row.get::<_, String>(8).unwrap_or_else(|_| "[]".to_string());
-                    Ok(ClipboardEntry {
-                        id: row.get(0)?,
-                        content_type: row.get(1)?,
-                        content: row.get(2)?,
-                        html_content: row.get(3).ok(),
-                        source_app: row.get(4)?,
-                        timestamp: row.get(5)?,
-                        preview: row.get(6)?,
-                        is_pinned: row.get::<_, i32>(7)? == 1,
-                        tags: serde_json::from_str(&tags_str).unwrap_or_default(),
-                        use_count: row.get(9).unwrap_or(0),
-                        is_external: row.get::<_, i32>(10)? == 1,
-                        pinned_order: row.get(11).unwrap_or(0),
-                        source_app_path: row.get(12).unwrap_or(None),
-                        deleted_at: None,
-                        file_preview_exists: true,
-                    })
-                })
-                .map_err(|e| e.to_string())?;
-
-            let mut results = Vec::new();
-            for row in rows {
-                results.push(row.map_err(|e| e.to_string())?);
+                    #[cfg(not(feature = "portable"))]
+                    {
+                        let mut results = results;
+                        if (results.len() as i32) < limit {
+                            let mut seen: HashSet<i64> = results.iter().map(|e| e.id).collect();
+                            self.search_encrypted_scan(&conn, &term, limit, &mut results, &mut seen)?;
+                        }
+                        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then(b.id.cmp(&a.id)));
+                        if results.len() > limit as usize {
+                            results.truncate(limit as usize);
+                        }
+                        return Ok(results);
+                    }
+                }
             }
-            Ok(results)
         }
+
+        let mut results = self.search_like(&conn, &term, limit, tag_only)?;
 
         #[cfg(not(feature = "portable"))]
         {
-            let mut results: Vec<ClipboardEntry> = Vec::new();
-            let mut seen: HashSet<i64> = HashSet::new();
-
-            let sensitive_tags_sql = {
-                let tags = crate::database::SENSITIVE_TAGS;
-                let parts: Vec<String> = tags
-                    .iter()
-                    .map(|t| format!("'{}'", t.replace('\'', "''")))
-                    .collect();
-                format!("({})", parts.join(","))
-            };
-
-            // 1) SQL search for non-sensitive (plaintext) entries
-            let sql_non_sensitive = if tag_only {
-                format!(
-                    "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
-                     FROM clipboard_history ch
-                     INNER JOIN entry_tags et ON ch.id = et.entry_id
-                     WHERE NOT EXISTS (
-                         SELECT 1 FROM entry_tags se
-                         WHERE se.entry_id = ch.id
-                           AND se.tag COLLATE NOCASE IN {}
-                     )
-                       AND et.tag LIKE '%' || ?1 || '%'
-                       AND ch.deleted_at IS NULL
-                     ORDER BY ch.timestamp DESC, ch.id DESC
-                     LIMIT ?2",
-                    sensitive_tags_sql
-                )
-            } else {
-                format!(
-                    "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
-                     FROM clipboard_history ch
-                     LEFT JOIN entry_tags et ON ch.id = et.entry_id
-                     WHERE NOT EXISTS (
-                         SELECT 1 FROM entry_tags se
-                         WHERE se.entry_id = ch.id
-                           AND se.tag COLLATE NOCASE IN {}
-                     )
-                       AND ch.deleted_at IS NULL
-                       AND (
-                         ch.content LIKE '%' || ?1 || '%'
-                         OR ch.source_app LIKE '%' || ?1 || '%'
-                         OR et.tag LIKE '%' || ?1 || '%'
-                       )
-                     ORDER BY ch.timestamp DESC, ch.id DESC
-                     LIMIT ?2",
-                    sensitive_tags_sql
-                )
-            };
-
-            let mut stmt = conn
-                .prepare(&sql_non_sensitive)
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![term, limit], |row| {
-                    let tags_str: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
-                    let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-                    let content_raw: String = row.get(2)?;
-                    let preview_raw: String = row.get(6)?;
-                    let html_raw: Option<String> = row.get(3).ok();
-                    let content = self.maybe_decrypt_text(&content_raw);
-                    let preview = self.maybe_decrypt_text(&preview_raw);
-                    let html_content = html_raw.map(|v| self.maybe_decrypt_text(&v));
-
-                    Ok(ClipboardEntry {
-                        id: row.get(0)?,
-                        content_type: row.get(1)?,
-                        content,
-                        html_content,
-                        source_app: row.get(4)?,
-                        timestamp: row.get(5)?,
-                        preview,
-                        is_pinned: row.get::<_, i32>(7)? == 1,
-                        tags,
-                        use_count: row.get(9).unwrap_or(0),
-                        is_external: row.get::<_, i32>(10)? == 1,
-                        pinned_order: row.get(11).unwrap_or(0),
-                        source_app_path: row.get(12).unwrap_or(None),
-                        deleted_at: None,
-                        file_preview_exists: true,
-                    })
-                })
-                .map_err(|e| e.to_string())?;
-
-            for row in rows {
-                if let Ok(entry) = row {
-                    if seen.insert(entry.id) {
-                        results.push(entry);
-                    }
-                }
+            if (results.len() as i32) < limit {
+                let mut seen: HashSet<i64> = results.iter().map(|e| e.id).collect();
+                self.search_encrypted_scan(&conn, &term, limit, &mut results, &mut seen)?;
             }
-
-            // 2) Decrypt-scan sensitive or encrypted entries (only if needed)
-            if results.len() < limit as usize {
-                let mut cursor_ts = i64::MAX;
-                let mut cursor_id = i64::MAX;
-                let batch_size = 500;
-                let enc_like = format!("{}%", ENCRYPT_PREFIX);
-                let sql_sensitive = format!(
-                    "SELECT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
-                     FROM clipboard_history ch
-                     WHERE ch.deleted_at IS NULL
-                       AND (
-                         EXISTS (
-                             SELECT 1 FROM entry_tags se
-                             WHERE se.entry_id = ch.id
-                               AND se.tag COLLATE NOCASE IN {}
-                         )
-                         OR ch.content LIKE ?1
-                         OR ch.preview LIKE ?1
-                         OR ch.html_content LIKE ?1
-                       )
-                       AND ((ch.timestamp < ?2) OR (ch.timestamp = ?2 AND ch.id < ?3))
-                     ORDER BY ch.timestamp DESC, ch.id DESC
-                     LIMIT ?4",
-                    sensitive_tags_sql
-                );
-
-                loop {
-                    let mut stmt = conn.prepare(&sql_sensitive).map_err(|e| e.to_string())?;
-                    let rows = stmt
-                        .query_map(params![enc_like, cursor_ts, cursor_id, batch_size], |row| {
-                            let tags_str: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
-                            Ok(ClipboardEntry {
-                                id: row.get(0)?,
-                                content_type: row.get(1)?,
-                                content: row.get(2)?, // Encrypted
-                                html_content: row.get(3).ok(),
-                                source_app: row.get(4)?,
-                                timestamp: row.get(5)?,
-                                preview: row.get(6)?, // Encrypted
-                                is_pinned: row.get::<_, i32>(7)? == 1,
-                                tags: serde_json::from_str(&tags_str).unwrap_or_default(),
-                                use_count: row.get(9).unwrap_or(0),
-                                is_external: row.get::<_, i32>(10)? == 1,
-                                pinned_order: row.get(11).unwrap_or(0),
-                                source_app_path: row.get(12).unwrap_or(None),
-                                deleted_at: None,
-                                file_preview_exists: true,
-                            })
-                        })
-                        .map_err(|e| e.to_string())?;
-
-                    let mut batch: Vec<ClipboardEntry> = Vec::new();
-                    for row in rows {
-                        if let Ok(mut entry) = row {
-                            entry.content = self.maybe_decrypt_text(&entry.content);
-                            entry.preview = self.maybe_decrypt_text(&entry.preview);
-                            if let Some(html) = entry.html_content.take() {
-                                entry.html_content = Some(self.maybe_decrypt_text(&html));
-                            }
-                            batch.push(entry);
-                        }
-                    }
-
-                    if batch.is_empty() {
-                        break;
-                    }
-
-                    for entry in batch.iter() {
-                        let matches = if tag_only {
-                            entry.tags.iter().any(|t| t.to_lowercase().contains(&term))
-                        } else {
-                            entry.content.to_lowercase().contains(&term)
-                                || entry.source_app.to_lowercase().contains(&term)
-                                || entry.tags.iter().any(|t| t.to_lowercase().contains(&term))
-                        };
-
-                        if matches && seen.insert(entry.id) {
-                            results.push(entry.clone());
-                            if results.len() >= limit as usize {
-                                break;
-                            }
-                        }
-                    }
-
-                    if results.len() >= limit as usize {
-                        break;
-                    }
-
-                    if let Some(last) = batch.last() {
-                        cursor_ts = last.timestamp;
-                        cursor_id = last.id;
-                    } else {
-                        break;
-                    }
-                }
-            }
-
             results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then(b.id.cmp(&a.id)));
             if results.len() > limit as usize {
                 results.truncate(limit as usize);
             }
-            Ok(results)
         }
+
+        Ok(results)
     }
 
     fn delete(&self, id: i64, data_dir: Option<&std::path::Path>) -> Result<(), String> {
@@ -1382,7 +1412,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, content_type, content, html_content, source_app, timestamp, preview,
+                "SELECT id, content_type, content, source_app, timestamp, preview,
                         is_pinned, tags, use_count, is_external, pinned_order, source_app_path, deleted_at
                  FROM clipboard_history
                  WHERE deleted_at IS NOT NULL
@@ -1392,30 +1422,28 @@ impl ClipboardRepository for SqliteClipboardRepository {
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([limit, offset], |row| {
-                let tags_str: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
+                let tags_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
                 let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
                 let content_type: String = row.get(1)?;
                 let content_raw: String = row.get(2)?;
-                let html_raw: Option<String> = row.get(3).ok();
-                let preview_raw: String = row.get(6)?;
+                let preview_raw: String = row.get(5)?;
                 let content = self.maybe_decrypt_text(&content_raw);
                 let preview = self.maybe_decrypt_text(&preview_raw);
-                let html_content = html_raw.as_ref().map(|v| self.maybe_decrypt_text(v));
                 Ok(ClipboardEntry {
                     id: row.get(0)?,
                     content_type,
                     content,
-                    html_content,
-                    source_app: row.get(4)?,
-                    timestamp: row.get(5)?,
+                    html_content: None,
+                    source_app: row.get(3)?,
+                    timestamp: row.get(4)?,
                     preview,
-                    is_pinned: row.get::<_, i32>(7)? == 1,
+                    is_pinned: row.get::<_, i32>(6)? == 1,
                     tags,
-                    use_count: row.get(9).unwrap_or(0),
-                    is_external: row.get::<_, i32>(10)? == 1,
-                    pinned_order: row.get(11).unwrap_or(0),
-                    source_app_path: row.get(12).unwrap_or(None),
-                    deleted_at: row.get(13).unwrap_or(None),
+                    use_count: row.get(8).unwrap_or(0),
+                    is_external: row.get::<_, i32>(9)? == 1,
+                    pinned_order: row.get(10).unwrap_or(0),
+                    source_app_path: row.get(11).unwrap_or(None),
+                    deleted_at: row.get(12).unwrap_or(None),
                     file_preview_exists: true,
                 })
             })
@@ -1470,5 +1498,140 @@ impl ClipboardRepository for SqliteClipboardRepository {
             .query_row([], |row| row.get(0))
             .map_err(|e| e.to_string())?;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod fts_tests {
+    use super::*;
+    use crate::infrastructure::repository::migrations::run_migrations;
+
+    fn setup_db() -> (Arc<Mutex<Connection>>, SqliteClipboardRepository) {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let arc = Arc::new(Mutex::new(conn));
+        let repo = SqliteClipboardRepository::new(arc.clone());
+        (arc, repo)
+    }
+
+    fn text_entry(content: &str, ts: i64) -> ClipboardEntry {
+        ClipboardEntry {
+            id: 0,
+            content_type: "text".to_string(),
+            content: content.to_string(),
+            deleted_at: None,
+            html_content: None,
+            source_app: "TestApp".to_string(),
+            source_app_path: None,
+            timestamp: ts,
+            preview: content.chars().take(40).collect(),
+            is_pinned: false,
+            tags: vec![],
+            use_count: 0,
+            is_external: false,
+            pinned_order: 0,
+            file_preview_exists: true,
+        }
+    }
+
+    #[test]
+    fn fts_migration_creates_index_and_triggers_sync() {
+        let (arc, repo) = setup_db();
+        repo.save(&text_entry("hello fts world", 1000), None).unwrap();
+        repo.save(&text_entry("锂电池RUL预测研究笔记", 2000), None).unwrap();
+
+        // >=3 chars goes through FTS5 trigram
+        let hits = repo.search("fts", 50, false).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].content, "hello fts world");
+
+        // CJK substring via trigram
+        let hits = repo.search("RUL预测", 50, false).unwrap();
+        assert_eq!(hits.len(), 1);
+
+        // Update keeps index in sync (trigger)
+        let id = hits[0].id;
+        {
+            let conn = arc.lock().unwrap();
+            conn.execute(
+                "UPDATE clipboard_history SET content = 'totally different body' WHERE id = ?",
+                params![id],
+            )
+            .unwrap();
+        }
+        assert_eq!(repo.search("RUL预测", 50, false).unwrap().len(), 0);
+        assert_eq!(repo.search("different body", 50, false).unwrap().len(), 1);
+
+        // Short query (<3 chars) falls back to LIKE and still matches
+        let hits = repo.search("he", 50, false).unwrap();
+        assert!(hits.iter().any(|e| e.content == "hello fts world"));
+    }
+
+    #[test]
+    fn fts_search_excludes_soft_deleted_and_returns_no_html() {
+        let (_arc, repo) = setup_db();
+        let id = repo
+            .save(&text_entry("payload for recycle test", 1000), None)
+            .unwrap();
+        repo.save(
+            &ClipboardEntry {
+                content_type: "rich_text".to_string(),
+                html_content: Some("<b>rich payload marker</b>".to_string()),
+                ..text_entry("rich payload text", 1500)
+            },
+            None,
+        )
+        .unwrap();
+
+        // rich_text search hit must not carry html_content (slim payload)
+        let hits = repo.search("rich payload", 50, false).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].html_content.is_none());
+
+        // soft delete removes from results
+        repo.soft_delete(id, now_ms()).unwrap();
+        let hits = repo.search("recycle test", 50, false).unwrap();
+        assert_eq!(hits.len(), 0);
+
+        // restore brings it back
+        repo.restore(id).unwrap();
+        let hits = repo.search("recycle test", 50, false).unwrap();
+        assert_eq!(hits.len(), 1);
+
+        // permanent delete removes from index via trigger
+        repo.permanent_delete(id, None).unwrap();
+        let hits = repo.search("recycle test", 50, false).unwrap();
+        assert_eq!(hits.len(), 0);
+    }
+
+    #[test]
+    fn fts_rebuild_backfills_from_existing_rows() {
+        // Regression: external-content FTS column names must match clipboard_history,
+        // otherwise 'rebuild' fails with "no such column" (seen with a tags_text mismatch).
+        let (arc, repo) = setup_db();
+        repo.save(&text_entry("existing row before rebuild", 1000), None).unwrap();
+        repo.save(&text_entry("锂电池RUL预测", 2000), None).unwrap();
+
+        {
+            let conn = arc.lock().unwrap();
+            // Wipe the index, then rebuild from the content table by column name.
+            conn.execute("INSERT INTO clipboard_fts (clipboard_fts) VALUES ('delete-all')", [])
+                .unwrap();
+            assert_eq!(repo.search_fts(&conn, "rebuild", 50).unwrap().len(), 0);
+            conn.execute("INSERT INTO clipboard_fts (clipboard_fts) VALUES ('rebuild')", [])
+                .unwrap();
+        }
+
+        // After rebuild the pre-existing rows must be findable again.
+        assert_eq!(repo.search("before rebuild", 50, false).unwrap().len(), 1);
+        assert_eq!(repo.search("RUL预测", 50, false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn fts_search_matches_source_app() {
+        let (_arc, repo) = setup_db();
+        repo.save(&text_entry("plain body", 1000), None).unwrap();
+        let hits = repo.search("testapp", 50, false).unwrap();
+        assert_eq!(hits.len(), 1);
     }
 }

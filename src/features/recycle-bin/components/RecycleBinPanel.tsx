@@ -11,6 +11,7 @@ interface RecycleBinPanelProps {
     retentionDays: number;
     theme: string;
     tagColors: Record<string, string>;
+    onClose: () => void;
 }
 
 function formatTime(ts: number): string {
@@ -49,7 +50,7 @@ function RecycleBinImage({ item, alt }: { item: ClipboardEntry; alt: string }) {
     );
 }
 
-export default function RecycleBinPanel({ t, retentionDays, theme, tagColors }: RecycleBinPanelProps) {
+export default function RecycleBinPanel({ t, retentionDays, theme, tagColors, onClose }: RecycleBinPanelProps) {
     const [items, setItems] = useState<ClipboardEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const requestSequence = useRef(0);
@@ -112,7 +113,12 @@ export default function RecycleBinPanel({ t, retentionDays, theme, tagColors }: 
         <div className="recycle-bin-panel">
             <div className="recycle-bin-header">
                 <span>{t('recycle_bin')}</span>
-                <span className="recycle-bin-count">{items.length}</span>
+                <div className="recycle-bin-header-actions">
+                    <span className="recycle-bin-count">{items.length}</span>
+                    <button className="btn-icon" title={t('close')} onClick={onClose}>
+                        <X size={16} />
+                    </button>
+                </div>
             </div>
             <div className="retention-info">
                 {t('retention_info').replace('{days}', String(retentionDays))}

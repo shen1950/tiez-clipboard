@@ -738,11 +738,30 @@ const ClipboardItem = ({
     const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hoverAnchorRef = useRef<CompactPreviewAnchor | null>(null);
     const hoverRequestIdRef = useRef(0);
-    const richTextFallback = item.content_type === "rich_text" && item.html_content
+    // Rich-text HTML is fetched on demand: list/search responses no longer carry
+    // html_content (it dominates storage), so visible items lazy-load it by id.
+    const [lazyHtml, setLazyHtml] = useState<string | null>(null);
+    const lazyHtmlIdRef = useRef<number | null>(null);
+    useEffect(() => {
+        if (lazyHtmlIdRef.current !== item.id) {
+            lazyHtmlIdRef.current = item.id;
+            setLazyHtml(null);
+        }
+        if (item.content_type !== "rich_text" || item.html_content != null) return;
+        let cancelled = false;
+        invoke<string | null>("get_entry_html", { id: item.id })
+            .then((html) => {
+                if (!cancelled && html) setLazyHtml(html);
+            })
+            .catch(() => { });
+        return () => { cancelled = true; };
+    }, [item.id, item.content_type, item.html_content]);
+    const itemHtml = item.html_content ?? lazyHtml ?? undefined;
+    const richTextFallback = item.content_type === "rich_text" && itemHtml
         ? (() => {
-            const { cleanHtml, imagePayload } = extractRichImageFallback(item.html_content);
+            const { cleanHtml, imagePayload } = extractRichImageFallback(itemHtml);
             return {
-                cleanHtml: cleanHtml || item.html_content,
+                cleanHtml: cleanHtml || itemHtml,
                 imagePayload,
                 imageSrc: resolveRichImageSrc(imagePayload)
             };
@@ -825,22 +844,22 @@ const ClipboardItem = ({
             sensitiveMaskEmailDomain
         ]
     );
-    const richTextCleanHtml = richTextFallback?.cleanHtml || item.html_content || "";
+    const richTextCleanHtml = richTextFallback?.cleanHtml || itemHtml || "";
     const richTextSnapshotDisplayMaxHeight = compactMode ? 40 : 64;
     const richTextSnapshotRenderMaxHeight = compactMode ? 100 : 200;
     const spreadsheetLikeRichSource = item.content_type === "rich_text"
-        && !!item.html_content
+        && !!itemHtml
         && isSpreadsheetLikeSource(item.source_app, item.source_app_path);
     const richTextHasAnimatedImageFallback = isAnimatedGifSrc(
         richTextFallback?.imagePayload || richTextFallback?.imageSrc || null
     );
     const preferHtmlRichPreview = item.content_type === "rich_text"
-        && !!item.html_content
+        && !!itemHtml
         && !richTextHasAnimatedImageFallback
         && !richHtmlLooksTabular(richTextCleanHtml)
         && !spreadsheetLikeRichSource;
     const preferGeneratedRichPreview = item.content_type === "rich_text"
-        && !!item.html_content
+        && !!itemHtml
         && !preferHtmlRichPreview
         && (
             !!richTextSnapshotPreview
@@ -849,7 +868,7 @@ const ClipboardItem = ({
         );
     const richTextSnapshotSrc = useMemo(() => {
         if (!preferGeneratedRichPreview) return null;
-        if (item.content_type !== "rich_text" || !item.html_content) return null;
+        if (item.content_type !== "rich_text" || !itemHtml) return null;
         if (!richTextCleanHtml) return null;
         return getRichTextSnapshotDataUrl(richTextCleanHtml, {
             width: compactMode ? 360 : 560,
@@ -859,7 +878,7 @@ const ClipboardItem = ({
     }, [
         preferGeneratedRichPreview,
         item.content_type,
-        item.html_content,
+        itemHtml,
         richTextCleanHtml,
         compactMode,
         richTextSnapshotRenderMaxHeight
@@ -1067,13 +1086,13 @@ const ClipboardItem = ({
             compactPreviewLog("emit compact-preview-update", {
                 itemId: item.id,
                 contentType: item.content_type,
-                hasHtml: !!item.html_content
+                hasHtml: !!itemHtml
             });
             await previewWindow.emit("compact-preview-update", {
                 contentType: item.content_type,
                 content: item.content,
                 preview: item.preview,
-                htmlContent: item.html_content,
+                htmlContent: itemHtml,
                 sourceApp: item.source_app,
                 timestamp: item.timestamp,
                 language,
@@ -1124,7 +1143,7 @@ const ClipboardItem = ({
                         contentType: item.content_type,
                         content: item.content,
                         preview: item.preview,
-                        htmlContent: item.html_content,
+                        htmlContent: itemHtml,
                         sourceApp: item.source_app,
                         timestamp: item.timestamp,
                         language,
@@ -1172,7 +1191,7 @@ const ClipboardItem = ({
     useEffect(() => {
         setSnapshotFailed(false);
         setRichImageFallbackFailed(false);
-    }, [item.id, item.html_content, richTextSnapshotPreview, compactMode]);
+    }, [item.id, itemHtml, richTextSnapshotPreview, compactMode]);
 
     useEffect(() => {
         if (richSnapshotFallbackTimerRef.current) {
@@ -1801,7 +1820,7 @@ const ClipboardItem = ({
                             {language === 'zh' ? '输入补充信息后按回车提交' : 'Press Enter to submit supplementary info'}
                         </div>
                     </div>
-                ) : item.content_type === "rich_text" && item.html_content && !isSensitiveHidden ? (
+                ) : item.content_type === "rich_text" && itemHtml && !isSensitiveHidden ? (
                     richTextPreviewSrc ? (
                         <img
                             ref={richSnapshotImgRef}
@@ -1851,7 +1870,7 @@ const ClipboardItem = ({
                     ) : (
                         <HtmlContent
                             className="rich-text-preview"
-                            htmlContent={richTextCleanHtml || item.html_content}
+                            htmlContent={richTextCleanHtml || itemHtml}
                             fallbackText={item.preview}
                             preview={true}
                             style={{

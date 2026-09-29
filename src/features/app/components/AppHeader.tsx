@@ -19,7 +19,6 @@ import { getTagColor, getTagTextColor } from "../../../shared/lib/utils";
 interface AppHeaderProps {
   t: (key: string) => string;
   showSettings: boolean;
-  setShowSettings: (val: boolean) => void;
   showTagManager: boolean;
   setShowTagManager: (val: boolean) => void;
   tagManagerEnabled: boolean;
@@ -46,17 +45,16 @@ interface AppHeaderProps {
   setEditingTagsId: (val: number | null) => void;
   theme: string;
   colorMode: string;
-  settingsTitle: string;
   typeFilter: string | null;
   setTypeFilter: (val: string | null) => void;
   onBack: () => void;
   onToggleChat: () => void;
+  onOpenSettings: () => void;
 }
 
 const AppHeader = ({
   t,
   showSettings,
-  setShowSettings,
   showTagManager,
   setShowTagManager,
   tagManagerEnabled,
@@ -83,11 +81,11 @@ const AppHeader = ({
   setEditingTagsId,
   theme,
   colorMode,
-  settingsTitle,
   typeFilter,
   setTypeFilter,
   onBack,
-  onToggleChat
+  onToggleChat,
+  onOpenSettings
 }: AppHeaderProps) => {
   const getTypeName = (type: string) => {
     switch (type) {
@@ -106,7 +104,7 @@ const AppHeader = ({
   <header className="window-drag-region">
     <div className="header-top">
       <div className="header-leading">
-        {(showSettings || showTagManager || showEmojiPanel) && (
+        {(showSettings || showTagManager || showEmojiPanel || showRecycleBin) && (
           <button className="btn-icon window-no-drag" onClick={onBack}>
             <ChevronLeft size={18} />
           </button>
@@ -117,8 +115,8 @@ const AppHeader = ({
               ? (t('emoji_panel') || '表情包')
               : showTagManager && tagManagerEnabled
                 ? (t('tag_manager') || '标签管理')
-                : showSettings
-                  ? settingsTitle
+                : showRecycleBin
+                  ? (t('recycle_bin') || '回收站')
                   : t('app_name')}
           </span>
         </div>
@@ -143,12 +141,12 @@ const AppHeader = ({
               <Trash2 size={16} />
             </button>
             {tagManagerEnabled && (
-              <button className="btn-icon" title={t('tag_manager') || '标签管理'} onClick={() => setShowTagManager(true)}>
+              <button className="btn-icon" title={t('tag_manager') || '标签管理'} onClick={() => { setShowRecycleBin(false); setShowTagManager(true); }}>
                 <Tag size={16} />
               </button>
             )}
             {emojiPanelEnabled && (
-              <button className="btn-icon" title={t('emoji_panel') || '表情包'} onClick={() => setShowEmojiPanel(true)}>
+              <button className="btn-icon" title={t('emoji_panel') || '表情包'} onClick={() => { setShowRecycleBin(false); setShowEmojiPanel(true); }}>
                 <Smile size={16} />
               </button>
             )}
@@ -159,14 +157,14 @@ const AppHeader = ({
             >
               <ArchiveRestore size={16} />
             </button>
-            <button className="btn-icon" title={t('settings')} onClick={() => setShowSettings(true)}>
+            <button className="btn-icon" title={t('settings')} onClick={() => { setShowRecycleBin(false); onOpenSettings(); }}>
               <SettingsIcon size={16} />
             </button>
           </>
         )}
         {fileServerEnabled && (
           <button
-            className={`btn-icon header-chat-btn ${chatMode && showSettings ? 'active' : ''}`}
+            className={`btn-icon header-chat-btn ${chatMode ? 'active' : ''}`}
             title="Chat"
             onClick={onToggleChat}
           >
@@ -181,7 +179,7 @@ const AppHeader = ({
       </div>
     </div>
 
-    {!showSettings && !showTagManager && !showEmojiPanel && (
+    {!showSettings && !showTagManager && !showEmojiPanel && !showRecycleBin && (
       <AnimatePresence>
         {(showSearchBox || search.trim().length > 0) && (
           <motion.div

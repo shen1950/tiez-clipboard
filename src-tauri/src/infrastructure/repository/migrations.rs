@@ -228,6 +228,62 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])?;
     }
 
+    // Migration 12: FTS5 full-text search index (trigram tokenizer for CJK substring search).
+    // External-content table over clipboard_history; html_content is deliberately NOT indexed —
+    // rich-text HTML snapshots dominate storage (MBs) while searchable text is tiny.
+    // Column names MUST match clipboard_history (external-content rebuild selects by name).
+    if current_version < 12 {
+        let fts_setup = || -> Result<()> {
+            // Drop any partial/incorrect index from an earlier attempt so the
+            // schema below is authoritative and this migration is idempotent.
+            conn.execute_batch(
+                "
+                DROP TRIGGER IF EXISTS clipboard_fts_ai;
+                DROP TRIGGER IF EXISTS clipboard_fts_ad;
+                DROP TRIGGER IF EXISTS clipboard_fts_au;
+                DROP TABLE IF EXISTS clipboard_fts;
+                ",
+            )?;
+            conn.execute_batch(
+                "
+                CREATE VIRTUAL TABLE clipboard_fts USING fts5(
+                    content,
+                    source_app,
+                    tags,
+                    content='clipboard_history',
+                    content_rowid='id',
+                    tokenize='trigram'
+                );
+
+                CREATE TRIGGER clipboard_fts_ai AFTER INSERT ON clipboard_history BEGIN
+                    INSERT INTO clipboard_fts (rowid, content, source_app, tags)
+                    VALUES (new.id, new.content, new.source_app, new.tags);
+                END;
+
+                CREATE TRIGGER clipboard_fts_ad AFTER DELETE ON clipboard_history BEGIN
+                    INSERT INTO clipboard_fts (clipboard_fts, rowid, content, source_app, tags)
+                    VALUES ('delete', old.id, old.content, old.source_app, old.tags);
+                END;
+
+                CREATE TRIGGER clipboard_fts_au AFTER UPDATE ON clipboard_history BEGIN
+                    INSERT INTO clipboard_fts (clipboard_fts, rowid, content, source_app, tags)
+                    VALUES ('delete', old.id, old.content, old.source_app, old.tags);
+                    INSERT INTO clipboard_fts (rowid, content, source_app, tags)
+                    VALUES (new.id, new.content, new.source_app, new.tags);
+                END;
+                ",
+            )?;
+            // Backfill index from existing rows (idempotent full rebuild)
+            conn.execute("INSERT INTO clipboard_fts (clipboard_fts) VALUES ('rebuild')", [])?;
+            Ok(())
+        };
+        // If FTS5/trigram is unavailable in this SQLite build, skip the index;
+        // search falls back to the LIKE path at runtime.
+        if fts_setup().is_ok() {
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (12)", [])?;
+        }
+    }
+
     Ok(())
 }
 

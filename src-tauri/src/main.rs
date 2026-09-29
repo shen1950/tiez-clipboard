@@ -78,6 +78,7 @@ fn main() {
             app::commands::update_pinned_order,
             app::commands::get_db_count,
             app::commands::get_clipboard_content,
+            app::commands::get_entry_html,
             app::commands::set_sequential_mode,
             app::commands::set_sequential_hotkey,
             app::commands::set_rich_paste_hotkey,

@@ -329,6 +329,29 @@ pub fn get_clipboard_content(
     Err(AppError::Validation("Entry not found".to_string()))
 }
 
+/// On-demand HTML fetch for list items (lists no longer carry html_content).
+#[tauri::command]
+pub fn get_entry_html(
+    state: State<'_, DbState>,
+    session: State<'_, SessionHistory>,
+    id: i64,
+) -> AppResult<Option<String>> {
+    {
+        let session_items = session.inner().0.lock().unwrap();
+        if let Some(item) = session_items.iter().find(|i| i.id == id) {
+            return Ok(item.html_content.clone());
+        }
+    }
+
+    if let Some((_content, _content_type, html_content)) =
+        state.repo.get_entry_content_with_html(id).map_err(AppError::from)?
+    {
+        return Ok(html_content);
+    }
+
+    Ok(None)
+}
+
 #[tauri::command]
 pub fn update_pinned_order(
     app_handle: AppHandle,

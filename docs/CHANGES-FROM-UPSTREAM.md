@@ -78,6 +78,41 @@
 - 版本号 0.3.4 → 0.3.5（package.json / Cargo.toml / tauri.conf.json）。
 - tauri identifier `com.tiez` → `com.tiez.app`：**对齐本机既有安装的数据目录**（历史数据都在 `%APPDATA%\com.tiez.app`）。全新安装的用户如需沿用上游 identifier，可改回。
 
+## 9. SQLite FTS5 全文搜索（2026-09-29，借鉴 KwikPaste）
+
+**内容**：
+
+- 迁移 11 → 12：新增外部内容 FTS5 虚拟表 `clipboard_fts`（`content='clipboard_history'`、`content_rowid='id'`、`tokenize='trigram'`），索引 `content`/`source_app`/`tags` 三列；配套 AFTER INSERT/DELETE/UPDATE 触发器保持同步；迁移末尾 `rebuild` 回填既有行。
+- `search()` 重构为三条路径：≥3 字符走 FTS5 trigram（中文子串友好，`MATCH '"term"'` 字面子串语义）；FTS 报错或命中为空时回退 `LIKE`（防止索引异常导致"搜不到"）；`tag_only` 与 1–2 字符短词仍走 `LIKE`。非 portable 构建保留敏感/加密条目的解密扫描补全。
+- 迁移做成幂等：先 `DROP TRIGGER/TABLE IF EXISTS` 再重建，可修复早期半迁移状态。
+
+**原因**：上游搜索是 `content/source_app/tag` 三列 `LIKE '%q%'` 全表扫描，且查询会读取每行的 `html_content`（富文本快照，本机 26MB）溢出页，随历史增长线性变慢。FTS5 trigram 索引把搜索从全表扫描降为索引查找，且只索引文本三列（本机 content 合计仅 0.1MB），索引体积可忽略。
+
+**注意**：外部内容 FTS5 的 `rebuild` 按**列名**回读源表，FTS 表列名必须与 `clipboard_history` 一致（曾误用 `tags_text` 导致 `rebuild` 报 `no such column` 而静默失败、索引为空）。已加回归测试 `fts_rebuild_backfills_from_existing_rows` 覆盖。
+
+## 10. 列表/搜索响应瘦身：html_content 按需加载（2026-09-29）
+
+**内容**：
+
+- `get_history`、`search`、`get_recycle_bin_items`、`get_entries_by_tag` 的 SELECT 不再返回 `html_content`（置 `None`）。
+- 新增命令 `get_entry_html(id)`：先查 SessionHistory 再回库，按 id 取单条 html。
+- 前端 `ClipboardItem` 对可见的 `rich_text` 条目懒加载 html（`itemHtml = item.html_content ?? lazyHtml`），虚拟列表只挂载少量可见项，滚动即按需拉取。
+- 复制/粘贴不受影响：`copy_to_clipboard`/`get_clipboard_content` 在 `id != 0` 时本就从后端按 id 回取完整内容与 html。
+
+**原因**：`html_content` 是内存与 IPC 的主要负担（本机 26MB html vs 0.1MB 文本），而列表只需渲染文本预览。改为按需加载后，列表/搜索查询不再搬运整块 HTML，Rust 主进程与 WebView 堆的峰值随之下降——对齐 KwikPaste「主进程恒定、按需流式取数」的结构优势。富文本快照预览仍保留，仅在条目进入视口时异步生成。
+
+## 11. 设置界面独立窗口，与剪贴板页面彻底分离（2026-09-29）
+
+**内容**：
+
+- 新增 `SettingsWindow`（`src/features/settings/components/SettingsWindow.tsx`），经 `main.tsx` 的 `?window=settings` 路由挂载，复用 `useAppState` + 全套 settings hooks（init/post-init/apply/sync/bootstrap/hotkey/app-actions）自持状态。
+- 新增 `openSettingsWindow()`（`settingsWindowControls.ts`）：用 `WebviewWindow` 创建/复用 label 为 `settings` 的独立窗口（860×640、可缩放、无边框透明、居中）；`tauri.conf.json` capability 的 windows 列表加入 `settings` 并补 `core:window:allow-close`。
+- 主窗口 `AppHeader` 齿轮按钮改为 `openSettingsWindow()`；`AppMainContent` 移除 SettingsPanel 分支，文件传输聊天（chatMode）独立于设置渲染；`App.tsx` 移除 `useSettingsPanelProps`/`useHotkeyConfig`/`toggleGroup` 等仅供设置的接线。
+- 跨窗口同步：设置窗口变更后防抖 `emit("settings-changed")`（复用 `useSettingsInit` 既有监听），主窗口收到即从后端 `get_settings` 重载并应用；窗口关闭/刷新时 `beforeunload` 再兜底广播一次。设置内的「打开文件传输」经 `open-file-transfer` 事件让主窗口 `focus_clipboard_window` 并进入聊天。
+- `set_theme(window: WebviewWindow)` 本就作用于调用窗口，故设置窗口独立获得云母/亚克力与原生圆角，无需额外处理。
+
+**原因**：上游设置是 352px 窄剪贴板窗内切换的视图，长表单局促、且设置态与剪贴板态耦合在一个 React 树里。独立窗口让设置拥有完整桌面窗口尺寸、与剪贴板生命周期解耦（对齐 KwikPaste 的 Alt+X 独立偏好窗口），主窗口回归纯剪贴板职责。
+
 ---
 
 ## 已知限制与未完成项（发布时保留原样，未改动）
@@ -91,3 +126,5 @@
 ## 构建方式
 
 见 [pixpin-clipboard-fix-2026-09-09.md](./pixpin-clipboard-fix-2026-09-09.md) 的"本机构建"一节（CARGO_HOME 重定向、离线构建、`--no-bundle`）。标准构建直接 `npm run tauri:build` 即可。
+
+> **警告（2026-09-29 踩坑）**：不要用裸 `cargo build --release` 产出部署 exe。Tauri v2 的 dev/prod 判定依赖 tauri CLI 注入的 `TAURI_ENV_*` 环境变量（本仓库 `[features]` 未声明 `custom-protocol`），裸 cargo 构建会被当作 dev 模式，运行时去连 `devUrl`（localhost:1420），dev server 未起时窗口显示 `ERR_CONNECTION_REFUSED` 错误页。必须走 `npm run tauri:build -- --no-bundle --config <local-build.json>`。

@@ -57,12 +57,14 @@
           "description": "Main window capabilities",
           "windows": [
             "main",
-            "compact-preview"
+            "compact-preview",
+            "settings"
           ],
           "permissions": [
             "core:window:allow-start-dragging",
             "core:window:allow-hide",
             "core:window:allow-show",
+            "core:window:allow-close",
             "core:window:allow-set-focus",
             "core:window:allow-is-visible",
             "core:window:allow-inner-size",

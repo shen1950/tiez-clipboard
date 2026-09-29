@@ -8,7 +8,7 @@ interface UseAiActionsOptions {
   aiProfiles: AiProfile[];
   language: string;
   pushToast: (msg: string, duration?: number, action?: { label: string; onClick: () => void }) => number;
-  setShowSettings: Dispatch<SetStateAction<boolean>>;
+  onOpenSettings: () => void;
   setProcessingAiId: Dispatch<SetStateAction<number | null>>;
   setHistory: Dispatch<SetStateAction<ClipboardEntry[]>>;
 }
@@ -17,7 +17,7 @@ export const useAiActions = ({
   aiProfiles,
   language,
   pushToast,
-  setShowSettings,
+  onOpenSettings,
   setProcessingAiId,
   setHistory
 }: UseAiActionsOptions) => {
@@ -30,7 +30,7 @@ export const useAiActions = ({
             : "Please add an AI model in settings first",
           3000
         );
-        setShowSettings(true);
+        onOpenSettings();
         return;
       }
 
@@ -79,7 +79,7 @@ export const useAiActions = ({
         setProcessingAiId(null);
       }
     },
-    [aiProfiles, language, pushToast, setHistory, setProcessingAiId, setShowSettings]
+    [aiProfiles, language, pushToast, setHistory, setProcessingAiId, onOpenSettings]
   );
 
   return { handleAIAction };
