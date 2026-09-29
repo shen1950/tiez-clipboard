@@ -1,144 +1,84 @@
 # TieZ-GuLing
 
-> 独立编号的 TieZ 个人优化线（fork 自 [jimuzhe/tiez-clipboard](https://github.com/jimuzhe/tiez-clipboard)）。
-> 版本自 **1.0.0** 起独立编号，不再跟随上游 0.3.x；上游仅作为安全/功能修复的参考来源。
->
-> | 分支 | 说明 |
-> | --- | --- |
-> | `v1.0.0-sep` | 设置独立窗口版（推荐）：设置界面为独立桌面窗口，主窗口只做剪贴板 |
-> | `v1.0.0-int` | 设置一体版：设置仍在主窗口内切换，单窗口党/低内存长开设置场景 |
->
-> 当前文档版本：`1.0.0-sep`。数据目录 identifier 保持 `com.tiez.app` 以兼容既有历史数据。
+**STAY FAST. STAY SYNCED. —— 本地优先的 Windows / macOS 剪贴板管理器（TieZ 个人优化线）**
 
----
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
-<p align="left">
-  <img src="docs/images/logo.png" width="32" vertical-align="middle" />
-  <b>让碎片化信息轻松流转的剪贴板工具</b>
-</p>
+> 自 1.0.0 起独立编号，不再跟随上游 TieZ 0.3.x 版本线；上游仅作为修复参考来源。
+> 数据标识符保持 `com.tiez.app`，可直接沿用 TieZ 原版的历史数据。
 
----
+## 版本系列
 
-<div align="center">
-  <img src="docs/images/logo.png" alt="TieZ Hero Logo" width="300" />
-
-  ### **STAY FAST. STAY SYNCED.**
-
-  | STARS | VERSION | LICENSE | PLATFORM |
-  | :--- | :--- | :--- | :--- |
-  | [![Stars](https://img.shields.io/github/stars/jimuzhe/tiez-clipboard?label=STARS&style=for-the-badge&color=4CAF50)](https://github.com/jimuzhe/tiez-clipboard/stargazers) | [![Version](https://img.shields.io/github/v/release/jimuzhe/tiez-clipboard?label=VERSION&style=for-the-badge&color=2196F3)](https://github.com/jimuzhe/tiez-clipboard/releases) | [![License](https://img.shields.io/badge/LICENSE-GPL--3.0-FF9800?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0) | [![Platform](https://img.shields.io/badge/PLATFORM-WIN%20%2F%20MAC-f44336?style=for-the-badge)](https://github.com/jimuzhe/tiez-clipboard/releases) |
-
-  [English](./README.md) | [简体中文](./README.zh-CN.md)
-</div>
-
----
-
-<div align="center">
-
-## 主题展示 (Theme Gallery)
-
-探索为各种工作场景和效率场景精心设计的 4 款优雅主题样式。
-
-  <table>
-    <tr>
-      <td align="center"><b>极简毛玻璃</b><br><img src="docs/images/毛玻璃.png" width="220" /></td>
-      <td align="center"><b>笔记本风格</b><br><img src="docs/images/书.png" width="220" /></td>
-      <td align="center"><b>便利贴风格</b><br><img src="docs/images/便利贴.png" width="220" /></td>
-      <td align="center"><b>3D 动感</b><br><img src="docs/images/3d.png" width="220" /></td>
-    </tr>
-  </table>
-</div>
-
----
-
-## 为什么选择 TieZ?
-
-| 极速性能 | 深度工作流 | 本地隐私 | 云端流畅 |
-| :--- | :--- | :--- | :--- |
-| **瞬间响应**<br>Rust 核心层与原生监听器，只为追求毫秒级响应。 | **全能管理**<br>支持富文本、多色标签及高效的 AI 协作。 | **本地安全**<br>数据完全本地化存储，支持对各类敏感信息的预览自动脱敏。 | **多端无感同步**<br>基于 WebDAV 和 MQTT 协议，让剪贴板在设备间流动。 |
-
----
-
-## 核心功能
-
-### 基础体验
-- **原生效率**：基于 Tauri 2 和 Rust 构建，极致的内存占用与流畅度。
-- **智能采集**：自动记录文字、富文本 (HTML)、图片、文件和目录路径。
-- **现代美学**：完美支持 云母/亚克力 背景效果及暗黑模式，内置 **5 款经过精心调优的主题样式**。
-- **贴边收纳**：支持自动停靠在屏幕边缘，节省桌面空间且随时呼出。
-
-### 管理与增强
-- **标签系统**：通过自定义的多色标签对记录进行分类和整理。
-- **表情管理**：内置完整的 Emoji 表情库，支持快捷搜索与输入。
-- **高级设置**：精细化控制清理规则、全局快捷键映射及各种核心逻辑。
-- **隐私脱敏**：智能识别身份证、手机号、邮箱等隐私信息，预览时自动脱敏。
-
-### 网络与传输
-- **WebDAV 同步**：数据由你掌控，实现完美的跨设备历史同步。
-- **局域网传输**：在局域网内无缝且极速地传输文件和内容。
-- **秒传验证码**：手机端收到的短信验证码，瞬间同步至你正在操作的设备。
-- **MQTT 协议**：基于极轻量协议的同步方案，确保不同网络环境下的高实时性。
-
-### 效率提速
-- **外部协作**：一键调用外部编辑器修改内容，存盘后自动写回记录。
-- **全局搜索**：支持按内容、所属应用、标签或日期进行全文检索。
-- **顺序粘贴**：为高频办公场景设计的顺序拷贝/顺序粘贴工作流程。
-
----
-
-## 系统要求
-
-### 平台支持
-| 平台 | 运行环境要求 | 获取格式 |
+| GuLing 版本 | 对应旧编号 | 设置形态 |
 | :--- | :--- | :--- |
-| **Windows** | Windows 10/11 (x86/x64)<br>*(推荐使用 Win11)* | `.exe` / **`.zip` (便携版)** |
-| **macOS** | Sierra 10.15+ <br>(Apple Silicon / Intel) | `.dmg` |
-| **Linux** | 即将支持 | 敬请期待 |
+| v0.9.0 | 上游 TieZ 0.3.4（fork 基线，追溯标记） | 一体 |
+| v0.9.5 | 旧"v0.3.5"本地增强集：回收站/PixPin 收录/WebDAV 修复（追溯标记） | 一体（回收站浮层） |
+| v1.0.0 | 首个正式版本：FTS5 全文搜索 + html 按需加载 + 回收站全屏视图 | 一体 |
+| **v1.0.1** | 基于 1.0.0：设置界面独立桌面窗口 | **分离：设置独立窗口，主窗口专注剪贴板（本版本）** |
 
-[**前往 Releases 下载最新版本 →**](https://github.com/jimuzhe/tiez-clipboard/releases)
-
----
-
-## Star History
-
-<div align="center">
-  <a href="https://star-history.com/#jimuzhe/tiez-clipboard&Date">
-    <img src="https://api.star-history.com/svg?repos=jimuzhe/tiez-clipboard&type=Date" alt="Star History Chart" width="800" />
-  </a>
-</div>
+本分支/本 Release 为 **v1.0.1 分离版**。偏好单窗口一体形态请使用 [v1.0.0](../../releases/tag/v1.0.0)。
 
 ---
 
-## 交流与赞助
+## 功能
 
-如果 TieZ 提高了你的工作效率，欢迎赞助本项目持续演进。
+### 核心体验
+- Tauri 2 + Rust 内核，本地存储，剪贴板内容不出机
+- SQLite **FTS5(trigram)** 全文搜索：中文子串友好，千条级亚毫秒；可按来源应用、标签过滤
+- 采集文本 / 富文本(HTML) / 图片 / 文件路径；富文本 html 按可见项懒加载，列表响应轻量
+- PixPin 等截图工具「贴图并复制」自动收录（延迟渲染兼容 + 指数退避补读）
+- Mica / Acrylic 材质、深浅色、4+ 主题与自定义主题商店、边缘停靠
 
-<div align="center">
-  <table style="border: none;">
-    <tr>
-      <td align="center" style="border: none;">
-        <p><strong>微信赞赏</strong></p>
-        <img src="docs/images/wx.jpeg" alt="微信收款码" width="180" height="180" />
-      </td>
-      <td align="center" style="border: none;">
-        <p><strong>支付宝赞赏</strong></p>
-        <img src="docs/images/zfb.jpeg" alt="支付宝收款码" width="180" height="180" />
-      </td>
-      <td align="center" style="border: none;">
-        <p><strong>QQ 交流群</strong></p>
-        <img src="docs/images/qq.jpeg" alt="QQ 群二维码" width="180" height="180" />
-      </td>
-    </tr>
-  </table>
-  <br>
-  <p>每一份支持都是开发者保持更新的动力！</p>
-  <a href="https://tiez.name666.top/zh/sponsors.html"><strong>查看打赏赞助名单</strong></a>
-</div>
+### 设置独立窗口（本版特性）
+- 设置为独立桌面窗口（860×640，可缩放/拖拽/多显示器放置），主窗口只做剪贴板
+- 跨窗口实时同步：设置变更后主窗口经 `settings-changed` 事件自动重载
+- 独立窗口同样获得云母/亚克力材质与原生圆角
+
+### 管理增强
+- **回收站**：删除进回收站（软删除），保留期可配（3–30 天），误删可恢复、可永久删除/清空
+- 多色标签系统、置顶、收藏、备注、emoji 库
+- 隐私保护：敏感内容预览打码、可选加密存储
+- AI 操作（翻译/润色/摘要，自配模型 profile）
+
+### 网络与同步
+- **WebDAV 跨设备同步**（含临时文件 GC、配额满冷却、快照 blob 化）
+- MQTT 验证码/消息同步、局域网文件互传聊天页
+
+### 粘贴工作流
+- 顺序粘贴队列、富文本粘贴热键、快捷粘贴修饰键
+- 默认热键 Alt+C 唤起（可改，可接管 Win+V）
+
+### 主题展示
+
+| 极简毛玻璃 | 笔记本风格 | 便利贴风格 | 3D 动感 |
+| :---: | :---: | :---: | :---: |
+| ![毛玻璃](docs/images/毛玻璃.png) | ![书](docs/images/书.png) | ![便利贴](docs/images/便利贴.png) | ![3d](docs/images/3d.png) |
 
 ---
 
-<div align="center">
-  为每一个追求极致效率的开发者倾力打造。
-  <br>
-  <b>如果你喜欢这个项目，欢迎点个 Star。</b>
-</div>
+## 下载与运行
+
+- Release 页下载 `TieZ-GuLing-1.0.1-win-x64.exe`（直接运行）或同名 `.zip`（含使用说明）。
+- 数据默认在 `%APPDATA%\com.tiez.app`；便携数据：exe 同目录放 `datapath.txt` 写绝对路径。
+- 未签名构建：SmartScreen 提示时选「更多信息 → 仍要运行」。
+- 自动更新器指向上游、在本 fork 不生效；请手动跟随本仓库 Release 更新。
+
+## 构建
+
+```bash
+npm install
+npm run tauri:build -- --no-bundle --config <your-identifier.json>
+```
+
+> 注意：必须经 `tauri:build`（或带 Tauri CLI 环境变量）构建；裸 `cargo build --release`
+> 会产出连 devServer 的 dev 模式 exe（窗口显示 ERR_CONNECTION_REFUSED）。
+
+## 相对上游 0.3.4 的改动档案
+
+见 [docs/CHANGES-FROM-UPSTREAM.md](./docs/CHANGES-FROM-UPSTREAM.md)（回收站、FTS5、html 按需加载、
+设置独立窗口、PixPin 修复、WebDAV 修复、重编号说明等）。
+
+## 许可与致谢
+
+GPL-3.0。基于 [TieZ（jimuzhe/tiez-clipboard）](https://github.com/jimuzhe/tiez-clipboard) 二次开发，感谢原作者；
+架构借鉴 EcoPaste 系（Tauri2 + React19）与 KwikPaste 的 FTS5/独立设置窗口思路。

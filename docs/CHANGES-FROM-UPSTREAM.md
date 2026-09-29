@@ -1,6 +1,6 @@
 # 相对上游的本地改动一览（fork: shen1950/tiez-clipboard）
 
-> **重编号说明（TieZ-GuLing）**：自本线起版本独立编号为 1.0.0（变体后缀 `-sep`/`-int`），不再与上游 0.3.x 混用；本文档中历史条目里的 0.3.x 版本号仅指上游基线。
+> **重编号说明（TieZ-GuLing 版本系列）**：v0.9.0=上游 0.3.4 基线（追溯）；v0.9.5=旧"v0.3.5"本地增强集（追溯）；**v1.0.0=一体版**；**v1.0.1=分离版**（设置独立窗口，本文档多数条目所属）。不再与上游 0.3.x 混用。
 
 - **上游仓库**：[jimuzhe/tiez-clipboard](https://github.com/jimuzhe/tiez-clipboard)（原作者 LongDz / jimuzhe）
 - **基线**：上游 master `40f7305`（v0.3.4 之后、含 beta release workflow 的提交）

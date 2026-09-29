@@ -1,7 +1,7 @@
 {
   "name": "tiez-guling",
   "private": true,
-  "version": "1.0.0-sep",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
