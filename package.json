@@ -1,7 +1,7 @@
 {
   "name": "tiez-guling",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,7 +15,9 @@
     "release": "set -a && . ./.env && set +a && tauri build",
     "release:arm": "set -a && . ./.env && set +a && tauri build --target aarch64-apple-darwin",
     "release:intel": "set -a && . ./.env && set +a && tauri build --target x86_64-apple-darwin",
-    "release:all": "npm run release:arm && npm run release:intel"
+    "release:all": "npm run release:arm && npm run release:intel",
+    "tauri:build:setup": "tauri build --bundles nsis",
+    "tauri:build:portable": "tauri build --no-bundle"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",

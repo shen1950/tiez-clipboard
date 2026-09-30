@@ -771,10 +771,11 @@ const ClipboardItem = ({
         if (!isEditingTags) return [];
         const existing = new Set(item.tags || []);
         const q = localTagInput.trim().toLowerCase();
+        // Show every tag from the DB (popover scrolls); truncating here made
+        // some tags impossible to pick from the suggestion list.
         return tagSuggestions
             .filter((tag) => !existing.has(tag))
-            .filter((tag) => !q || tag.toLowerCase().includes(q))
-            .slice(0, 14);
+            .filter((tag) => !q || tag.toLowerCase().includes(q));
     }, [isEditingTags, item.tags, localTagInput, tagSuggestions]);
 
     const [tagSuggestIndex, setTagSuggestIndex] = useState(-1);
@@ -1467,7 +1468,7 @@ const ClipboardItem = ({
                         <div
                             ref={tagSuggestListRef}
                             id={`tag-suggest-list-${item.id}`}
-                            className="tag-edit-suggestions-popover hide-scrollbar"
+                            className="tag-edit-suggestions-popover"
                             role="listbox"
                             aria-label={t('find_tags')}
                             onMouseDown={(e) => e.stopPropagation()}

@@ -201,7 +201,9 @@
 .data-panel {
   background: var(--bg-input);
   color: var(--text-primary);
-  font-family: var(--font-mono) !important;
+  /* Follow the theme's content font (mono in retro, main font elsewhere) so
+     panels don't clash with the surrounding UI in non-retro themes. */
+  font-family: var(--content-font-family) !important;
   font-weight: 600;
   padding: 8px 12px;
   border: var(--data-panel-border);
@@ -1238,4 +1240,35 @@ body.theme-acrylic .settings-view select.search-input option {
   background: var(--segment-active-background);
   color: var(--segment-active-color);
   box-shadow: var(--segment-active-shadow);
+}
+
+/* Keep recording and clearing as separate actions. */
+.hotkey-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hotkey-clear {
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-element);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.hotkey-clear:hover:not(:disabled) {
+  background: var(--bg-button);
+  color: var(--text-primary);
+}
+
+.hotkey-clear:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

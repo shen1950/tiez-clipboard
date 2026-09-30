@@ -1,10 +1,10 @@
 
-import { memo, useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { ChevronRight, HelpCircle } from "lucide-react";
-import { motion } from "framer-motion";
+import { HelpCircle, Settings, Clipboard, Palette, Radio, Cloud, Sparkles, Send, AppWindow, Database, SlidersHorizontal, Info, Store } from "lucide-react";
+import SettingsNavigation, { type SettingsCategory } from "./SettingsNavigation";
 import type { Locale } from "../../../shared/types";
 import type { DefaultAppsMap, InstalledAppOption, SettingsSubpage, CloudSyncContentPrefs } from "../../app/types";
 import type { AiProfile, AiProfileStatusMap, AppCleanupPolicy, EditableAiProfile } from "../types";
@@ -247,7 +247,7 @@ interface SettingsPanelProps {
 const SettingsPanel = (props: SettingsPanelProps) => {
     const {
         t, theme, language, colorMode, showSourceAppIcon, setShowSourceAppIcon,
-        collapsedGroups, settingsSubpage, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, deleteAfterPaste, moveToTopAfterPaste,
+        settingsSubpage, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, deleteAfterPaste, moveToTopAfterPaste,
         sequentialMode, sequentialHotkey, isRecordingSequential,
         richPasteHotkey, isRecordingRich, searchHotkey, isRecordingSearch, quickPasteModifier, setQuickPasteModifier,
         privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules, sensitiveMaskPrefixVisible, setSensitiveMaskPrefixVisible, sensitiveMaskSuffixVisible, setSensitiveMaskSuffixVisible, sensitiveMaskEmailDomain, setSensitiveMaskEmailDomain, cleanupRules, setCleanupRules, appCleanupPolicies, setAppCleanupPolicies, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection, recycleBinRetentionDays, setRecycleBinRetentionDays,
@@ -264,7 +264,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         fileServerEnabled, fileServerPort, localIp, availableIps, setLocalIp, actualPort, fileTransferAutoOpen, showAutoCloseHint, fileServerAutoClose, fileTransferAutoCopy, fileTransferPath,
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
-        toggleGroup, setSettingsSubpage, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
+        setSettingsSubpage, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
         setSequentialModeState, setIsRecordingSequential, updateSequentialHotkey,
         setIsRecordingRich, updateRichPasteHotkey,
         setIsRecordingSearch, updateSearchHotkey,
@@ -453,63 +453,27 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         };
     }, []);
 
-    const openAdvancedSettingsWindow = useCallback(() => {
-        setSettingsSubpage("advanced");
-    }, [setSettingsSubpage]);
+    const [selectedCategory, setSelectedCategory] = useState("general");
+    const activeCategory = settingsSubpage === "home" ? selectedCategory : settingsSubpage;
+    const selectCategory = (id: string) => {
+        setIsRecording(false);
+        setIsRecordingSequential(false);
+        setIsRecordingRich(false);
+        setIsRecordingSearch(false);
+        if (id === "advanced" || id === "theme-store") {
+            setSettingsSubpage(id);
+        } else {
+            setSelectedCategory(id);
+            setSettingsSubpage("home");
+        }
+    };
 
-    return (
-        <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            style={{ display: 'flex', flexDirection: 'column', gap: '4px', minHeight: '100%', flex: 1 }}
-        >
-            {settingsSubpage === "theme-store" ? (
-                <ThemeStorePanel
-                    t={t}
-                    theme={theme}
-                    setTheme={setTheme}
-                    saveAppSetting={saveAppSetting}
-                    language={language}
-                    onBack={() => setSettingsSubpage("home")}
-                />
-            ) : settingsSubpage === "advanced" ? (
-                <>
-                    <AdvancedSettingsGroup
-                        t={t}
-                        cleanupRules={cleanupRules}
-                        setCleanupRules={setCleanupRules}
-                        appCleanupPolicies={appCleanupPolicies}
-                        setAppCleanupPolicies={setAppCleanupPolicies}
-                        installedApps={installedApps}
-                    />
-
-                    <AiProfileModal
-                        editingProfile={editingProfile}
-                        t={t}
-                        onClose={() => setEditingProfile(null)}
-                        onSave={handleSaveProfile}
-                        setEditingProfile={setEditingProfile}
-                    />
-
-                    <AppSelectorModal
-                        show={showAppSelector}
-                        installedApps={installedApps}
-                        theme={theme}
-                        colorMode={colorMode}
-                        t={t}
-                        onClose={() => setShowAppSelector(null)}
-                        onSave={saveAppSetting}
-                    />
-
-                    {/* Removed UpdateModal in advanced */}
-                </>
-            ) : (
-                <>
-            {/* General Settings */}
+    const categories: SettingsCategory[] = [
+        { id: "general", label: t("general_settings"), icon: Settings, content: (
             <GeneralSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['general']}
-                onToggle={() => toggleGroup('general')}
+                collapsed={false}
+                onToggle={() => {}}
                 LabelWithHint={LabelWithHint}
                 autoStart={autoStart}
                 setAutoStart={setAutoStart}
@@ -539,14 +503,15 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setArrowKeySelection={setArrowKeySelection}
                 recycleBinRetentionDays={recycleBinRetentionDays}
                 setRecycleBinRetentionDays={setRecycleBinRetentionDays}
+                appSettings={appSettings}
                 saveAppSetting={saveAppSetting}
             />
-
-            {/* Clipboard Settings */}
+        ) },
+        { id: "clipboard", label: t("clipboard_settings"), icon: Clipboard, content: (
             <ClipboardSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['clipboard']}
-                onToggle={() => toggleGroup('clipboard')}
+                collapsed={false}
+                onToggle={() => {}}
                 LabelWithHint={LabelWithHint}
                 persistent={persistent}
                 setPersistent={setPersistent}
@@ -610,12 +575,12 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 theme={theme}
                 colorMode={colorMode}
             />
-
-            {/* Appearance Settings */}
+        ) },
+        { id: "appearance", label: t("appearance_settings"), icon: Palette, content: (
             <AppearanceSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['appearance']}
-                onToggle={() => toggleGroup('appearance')}
+                collapsed={false}
+                onToggle={() => {}}
                 LabelWithHint={LabelWithHint}
                 theme={theme}
                 setTheme={setTheme}
@@ -640,12 +605,12 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 saveAppSetting={saveAppSetting}
                 setSettingsSubpage={setSettingsSubpage}
             />
-
-            {/* Sync Settings */}
+        ) },
+        { id: "sync", label: t("sync_settings"), icon: Radio, content: (
             <SyncSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['sync']}
-                onToggle={() => toggleGroup('sync')}
+                collapsed={false}
+                onToggle={() => {}}
                 LabelWithHint={LabelWithHint}
                 mqttEnabled={mqttEnabled}
                 mqttStatus={mqttStatus}
@@ -668,12 +633,12 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 mqttNotificationEnabled={mqttNotificationEnabled}
                 setMqttNotificationEnabled={setMqttNotificationEnabled}
             />
-
-            {CLOUD_SYNC_ENABLED && (
-                <CloudSyncSettingsGroup
+        ) },
+        { id: "cloud_sync", label: t("cloud_sync_settings"), icon: Cloud, content: (
+            <CloudSyncSettingsGroup
                     t={t}
-                    collapsed={collapsedGroups['cloud_sync']}
-                    onToggle={() => toggleGroup('cloud_sync')}
+                    collapsed={false}
+                    onToggle={() => {}}
                     LabelWithHint={LabelWithHint}
                     cloudSyncEnabled={cloudSyncEnabled}
                     setCloudSyncEnabled={setCloudSyncEnabled}
@@ -698,13 +663,12 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                     syncingNow={cloudSyncNowRunning}
                     onSyncNow={handleCloudSyncNow}
                 />
-            )}
-
-            {/* AI Assistant Settings */}
+        ) },
+        { id: "ai", label: t("ai_settings"), icon: Sparkles, content: (
             <AiSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['ai']}
-                onToggle={() => toggleGroup('ai')}
+                collapsed={false}
+                onToggle={() => {}}
                 aiEnabled={aiEnabled}
                 setAiEnabled={setAiEnabled}
                 saveSetting={saveSetting}
@@ -725,12 +689,12 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setAiThinkingBudget={setAiThinkingBudget}
                 theme={theme}
             />
-
-            {/* File Transfer Settings */}
+        ) },
+        { id: "file_transfer", label: t("file_transfer"), icon: Send, content: (
             <FileTransferSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['file_transfer']}
-                onToggle={() => toggleGroup('file_transfer')}
+                collapsed={false}
+                onToggle={() => {}}
                 fileServerEnabled={fileServerEnabled}
                 setFileServerEnabled={setFileServerEnabled}
                 fileServerPort={fileServerPort}
@@ -753,40 +717,47 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 saveSetting={saveSetting}
                 fetchEffectiveTransferPath={fetchEffectiveTransferPath}
             />
-
-            {/* Default Apps Settings */}
+        ) },
+        { id: "default_apps", label: t("default_apps"), icon: AppWindow, content: (
             <DefaultAppsSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['default_apps']}
-                onToggle={() => toggleGroup('default_apps')}
+                collapsed={false}
+                onToggle={() => {}}
                 installedApps={installedApps}
                 appSettings={appSettings}
                 defaultApps={defaultApps}
                 setShowAppSelector={setShowAppSelector}
             />
-
-            {/* Data Management Settings */}
+        ) },
+        { id: "data", label: t("data_management"), icon: Database, content: (
             <DataSettingsGroup
                 t={t}
-                collapsed={collapsedGroups['data']}
-                onToggle={() => toggleGroup('data')}
+                collapsed={false}
+                onToggle={() => {}}
                 dataPath={dataPath}
             />
-
-            <div className="settings-group">
-                <button
-                    type="button"
-                    className="group-header settings-nav-card"
-                    onClick={openAdvancedSettingsWindow}
-                >
-                    <div style={{ minWidth: 0, textAlign: "left" }}>
-                        <h3 style={{ margin: 0 }}>{t("advanced_settings")}</h3>
-                        <div className="settings-subpage-note">{t("advanced_settings_entry_desc")}</div>
-                    </div>
-                    <ChevronRight size={16} />
-                </button>
-            </div>
-
+        ) },
+        { id: "advanced", label: t("advanced_settings"), icon: SlidersHorizontal, content: (
+            <AdvancedSettingsGroup
+                        t={t}
+                        cleanupRules={cleanupRules}
+                        setCleanupRules={setCleanupRules}
+                        appCleanupPolicies={appCleanupPolicies}
+                        setAppCleanupPolicies={setAppCleanupPolicies}
+                        installedApps={installedApps}
+                    />
+        ) },
+        { id: "theme-store", label: t("theme_store"), icon: Store, content: (
+            <ThemeStorePanel
+                    t={t}
+                    theme={theme}
+                    setTheme={setTheme}
+                    saveAppSetting={saveAppSetting}
+                    language={language}
+                    onBack={() => selectCategory("appearance")}
+                />
+        ) },
+        { id: "about", label: t("settings_about"), icon: Info, content: (
             <SettingsFooter
                 t={t}
                 appVersion={appVersion}
@@ -797,29 +768,34 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 emailCopied={emailCopied}
                 setEmailCopied={setEmailCopied}
             />
+        ) }
+    ].filter(category => category.id !== "cloud_sync" || CLOUD_SYNC_ENABLED);
 
+    return (
+        <>
+            <SettingsNavigation
+                categories={categories}
+                active={activeCategory}
+                onSelect={selectCategory}
+                label={t("settings_navigation")}
+            />
             <AiProfileModal
-                editingProfile={editingProfile}
-                t={t}
-                onClose={() => setEditingProfile(null)}
-                onSave={handleSaveProfile}
-                setEditingProfile={setEditingProfile}
-            />
-
+                        editingProfile={editingProfile}
+                        t={t}
+                        onClose={() => setEditingProfile(null)}
+                        onSave={handleSaveProfile}
+                        setEditingProfile={setEditingProfile}
+                    />
             <AppSelectorModal
-                show={showAppSelector}
-                installedApps={installedApps}
-                theme={theme}
-                colorMode={colorMode}
-                t={t}
-                onClose={() => setShowAppSelector(null)}
-                onSave={saveAppSetting}
-            />
-
-            {/* Removed UpdateModal in generic */}
-                </>
-            )}
-        </motion.div>
+                        show={showAppSelector}
+                        installedApps={installedApps}
+                        theme={theme}
+                        colorMode={colorMode}
+                        t={t}
+                        onClose={() => setShowAppSelector(null)}
+                        onSave={saveAppSetting}
+                    />
+        </>
     );
 };
 

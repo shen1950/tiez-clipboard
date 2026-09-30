@@ -29,6 +29,16 @@ const loadCtor = async (): Promise<WebviewWindowCtor | null> => {
 
 let opening: Promise<void> | null = null;
 
+/**
+ * Re-raises and focuses the settings window from the Rust side. Windows denies
+ * SetForegroundWindow to processes that don't own the foreground (e.g. when
+ * settings is opened from the no-activate clipboard popup), which dropped the
+ * freshly created window to the bottom of the z-order ("flash then vanish").
+ */
+const forceSettingsForeground = async (): Promise<void> => {
+    await invoke("force_window_foreground", { label: SETTINGS_WINDOW_LABEL }).catch(() => { });
+};
+
 /** Opens (or focuses) the standalone settings window. Safe to call repeatedly. */
 export const openSettingsWindow = async (): Promise<void> => {
     if (!isTauriRuntime()) return;
@@ -43,15 +53,16 @@ export const openSettingsWindow = async (): Promise<void> => {
                 await existing.unminimize().catch(() => { });
                 await existing.show().catch(() => { });
                 await existing.setFocus().catch(() => { });
+                await forceSettingsForeground();
                 return;
             }
             const win = new Ctor(SETTINGS_WINDOW_LABEL, {
                 url: "index.html?window=settings",
                 title: "TieZ Settings",
-                width: 860,
-                height: 640,
-                minWidth: 520,
-                minHeight: 420,
+                width: 980,
+                height: 720,
+                minWidth: 720,
+                minHeight: 480,
                 resizable: true,
                 decorations: false,
                 transparent: true,
@@ -59,7 +70,9 @@ export const openSettingsWindow = async (): Promise<void> => {
                 skipTaskbar: false,
                 alwaysOnTop: false,
                 center: true,
-                visible: true,
+                // Created hidden; force_window_foreground shows it in one step
+                // so it never flashes on top and then sinks behind the desktop.
+                visible: false,
                 focus: true,
                 dragDropEnabled: false
             });
@@ -72,6 +85,9 @@ export const openSettingsWindow = async (): Promise<void> => {
                     resolve();
                 });
             });
+            await forceSettingsForeground();
+            // WebView2 settles after init and can re-order windows; re-assert.
+            setTimeout(() => { void forceSettingsForeground(); }, 250);
         } catch (err) {
             console.error("openSettingsWindow failed", err);
         } finally {

@@ -44,8 +44,25 @@ interface GeneralSettingsGroupProps {
     setSoundVolume: (val: number) => void;
     recycleBinRetentionDays: number;
     setRecycleBinRetentionDays: (val: number) => void;
+    appSettings: Record<string, string>;
     saveAppSetting: (key: string, val: string) => void;
 }
+
+const TRAY_LEFT_ACTIONS = ['show_main', 'toggle_main', 'open_settings', 'none'] as const;
+const TRAY_RIGHT_ACTIONS = ['menu', 'show_main', 'toggle_main', 'open_settings', 'none'] as const;
+
+// Same dropdown treatment as the AI assistant settings selects: the inline
+// values get overridden per theme (mica/acrylic render them soft and rounded),
+// so every select in the settings pages stays visually consistent.
+const dropdownStyle = {
+    borderRadius: '0',
+    padding: '6px',
+    width: '160px',
+    background: 'var(--bg-input)',
+    border: '2px solid var(--border-dark)',
+    color: 'var(--text-primary)',
+    fontSize: '12px'
+} as const;
 
 const GeneralSettingsGroup = ({
     t,
@@ -80,6 +97,7 @@ const GeneralSettingsGroup = ({
     setSoundVolume,
     recycleBinRetentionDays,
     setRecycleBinRetentionDays,
+    appSettings,
     saveAppSetting
 }: GeneralSettingsGroupProps) => (
     <div className={`settings-group ${collapsed ? 'collapsed' : ''}`}>
@@ -126,6 +144,74 @@ const GeneralSettingsGroup = ({
                         <div className="toggle"><div className="left" /><div className="right" /></div>
                     </label>
                 </div>
+
+                {!hideTrayIcon && (
+                    <div className="setting-item column" style={{ borderBottom: 'none' }}>
+                        <span className="item-label">{t('tray_behavior')}</span>
+                        <div className="setting-item" style={{ marginTop: '8px' }}>
+                            <div className="item-label-group">
+                                <span className="item-label">{t('tray_left_click')}</span>
+                            </div>
+                            <select
+                                className="search-input"
+                                style={dropdownStyle}
+                                value={appSettings['app.tray_left_click'] || 'show_main'}
+                                onChange={(e) => saveAppSetting('tray_left_click', e.target.value)}
+                            >
+                                {TRAY_LEFT_ACTIONS.map((action) => (
+                                    <option key={action} value={action}>{t(`tray_action_${action}`)}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="setting-item" style={{ marginTop: '8px' }}>
+                            <div className="item-label-group">
+                                <span className="item-label">{t('tray_left_double_click')}</span>
+                            </div>
+                            <select
+                                className="search-input"
+                                style={dropdownStyle}
+                                value={appSettings['app.tray_left_double_click'] || 'open_settings'}
+                                onChange={(e) => saveAppSetting('tray_left_double_click', e.target.value)}
+                            >
+                                {TRAY_LEFT_ACTIONS.map((action) => (
+                                    <option key={action} value={action}>{t(`tray_action_${action}`)}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="setting-item" style={{ marginTop: '8px' }}>
+                            <LabelWithHint
+                                label={t('tray_right_click')}
+                                hint={t('tray_right_click_hint')}
+                                hintKey="tray_right_click"
+                            />
+                            <select
+                                className="search-input"
+                                style={dropdownStyle}
+                                value={appSettings['app.tray_right_click'] || 'menu'}
+                                onChange={(e) => saveAppSetting('tray_right_click', e.target.value)}
+                            >
+                                {TRAY_RIGHT_ACTIONS.map((action) => (
+                                    <option key={action} value={action}>{t(`tray_action_${action}`)}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="setting-item" style={{ marginTop: '8px' }}>
+                            <div className="item-label-group">
+                                <span className="item-label">{t('tray_right_double_click')}</span>
+                            </div>
+                            <select
+                                className="search-input"
+                                style={dropdownStyle}
+                                value={appSettings['app.tray_right_double_click'] || 'none'}
+                                onChange={(e) => saveAppSetting('tray_right_double_click', e.target.value)}
+                            >
+                                {TRAY_RIGHT_ACTIONS.map((action) => (
+                                    <option key={action} value={action}>{t(`tray_action_${action}`)}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                )}
 
                 {isMacPlatform && (
                     <div className="setting-item">
@@ -363,7 +449,8 @@ const GeneralSettingsGroup = ({
                         hintKey="recycle_bin_retention"
                     />
                     <select
-                        className="setting-select"
+                        className="search-input"
+                        style={dropdownStyle}
                         value={recycleBinRetentionDays}
                         onChange={(e) => {
                             const days = parseInt(e.target.value);

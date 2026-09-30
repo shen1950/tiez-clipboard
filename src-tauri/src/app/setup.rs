@@ -1032,13 +1032,57 @@ fn init_announcement_ping(app: &App, repo: &impl SettingsRepository) {
     }
 }
 
+static TRAY_CLICK_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Timestamp (ms) of the last tray DoubleClick; a double click is followed by
+/// a trailing Click(Up) that must not re-run the single-click action.
+static TRAY_LAST_DOUBLE_CLICK_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+/// Reads a tray behavior setting straight from the settings store so tray
+/// clicks always follow the latest value written by the settings window.
+fn tray_action_setting(app: &AppHandle, key: &str, default: &str) -> String {
+    app.try_state::<DbState>()
+        .and_then(|db| db.settings_repo.get(key).ok().flatten())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// Executes a tray action: show_main / toggle_main / open_settings / menu / none.
+fn run_tray_action(app: &AppHandle, action: &str) {
+    match action {
+        "show_main" => {
+            if let Some(window) = app.get_webview_window("main") {
+                if WINDOW_PINNED.load(Ordering::Relaxed) {
+                    let _ = window.show();
+                } else {
+                    let _ = crate::app::window_manager::focus_clipboard_window(app.clone());
+                }
+                LAST_SHOW_TIMESTAMP.store(now_millis(), Ordering::Relaxed);
+            }
+        }
+        "toggle_main" => crate::app::window_manager::toggle_window(app),
+        "open_settings" => {
+            let _ = app.emit("open-settings-request", ());
+        }
+        _ => {}
+    }
+}
+
 fn setup_tray(app: &App, hide_tray: bool) {
     use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
     let show_i = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>).unwrap();
+    let settings_i =
+        MenuItem::with_id(app, "open_settings", "打开设置", true, None::<&str>).unwrap();
     let quit_i = MenuItem::with_id(app, "quit", "退出 TieZ-GuLing", true, None::<&str>).unwrap();
-    let menu = Menu::with_items(app, &[&show_i, &quit_i]).unwrap();
+    let menu = Menu::with_items(app, &[&show_i, &settings_i, &quit_i]).unwrap();
     let icon =
         tauri::image::Image::from_bytes(include_bytes!("../../icons/tray-icon.png")).unwrap();
 
@@ -1049,28 +1093,79 @@ fn setup_tray(app: &App, hide_tray: bool) {
         .menu(&menu)
         .on_menu_event(|app, event| {
             if event.id.as_ref() == "show" {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                }
+                run_tray_action(app, "show_main");
+            } else if event.id.as_ref() == "open_settings" {
+                run_tray_action(app, "open_settings");
             } else if event.id.as_ref() == "quit" {
                 app.exit(0);
             }
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                ..
-            } = event
-            {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64;
-                    LAST_SHOW_TIMESTAMP.store(now, Ordering::Relaxed);
+            let app = tray.app_handle();
+            match &event {
+                // Distinguish single from double click: a double click also
+                // emits a regular click first, so a non-instant single-click
+                // action is deferred and cancelled by a DoubleClick event.
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    // Swallow the trailing Up that follows a DoubleClick.
+                    let last_dbl = TRAY_LAST_DOUBLE_CLICK_MS.load(Ordering::SeqCst);
+                    if last_dbl != 0 && now_millis().saturating_sub(last_dbl) < 400 {
+                        return;
+                    }
+                    let action = tray_action_setting(app, "app.tray_left_click", "show_main");
+                    if action == "show_main" {
+                        // Keep the most common action instant, matching the
+                        // historical tray behavior.
+                        run_tray_action(app, &action);
+                        return;
+                    }
+                    if action == "none" || action == "menu" {
+                        return;
+                    }
+                    let generation = TRAY_CLICK_GENERATION.load(Ordering::SeqCst);
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        if TRAY_CLICK_GENERATION.load(Ordering::SeqCst) == generation {
+                            run_tray_action(&app, &action);
+                        }
+                    });
                 }
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    TRAY_LAST_DOUBLE_CLICK_MS.store(now_millis(), Ordering::SeqCst);
+                    TRAY_CLICK_GENERATION.fetch_add(1, Ordering::SeqCst);
+                    let action =
+                        tray_action_setting(app, "app.tray_left_double_click", "open_settings");
+                    run_tray_action(app, &action);
+                }
+                // The context menu pops up automatically on right button down;
+                // a configured extra action runs alongside it.
+                TrayIconEvent::Click {
+                    button: MouseButton::Right,
+                    button_state: MouseButtonState::Down,
+                    ..
+                } => {
+                    let action = tray_action_setting(app, "app.tray_right_click", "menu");
+                    if action != "menu" {
+                        run_tray_action(app, &action);
+                    }
+                }
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Right,
+                    ..
+                } => {
+                    let action =
+                        tray_action_setting(app, "app.tray_right_double_click", "none");
+                    run_tray_action(app, &action);
+                }
+                _ => {}
             }
         })
         .build(app)

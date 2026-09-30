@@ -286,7 +286,7 @@ const SettingsFooter = ({
                     justifyContent: 'center',
                     gap: '8px'
                 }}>
-                    <span>TieZ {appVersion ? `v${appVersion}` : "v0.2.0"}</span>
+                    <span>TieZ-GuLing {appVersion ? `v${appVersion}` : "v0.2.0"}</span>
                     <button
                         onClick={async () => {
                             if (updateStatus) return;
@@ -359,7 +359,7 @@ const SettingsFooter = ({
                         {t('official_website')}
                     </button>
                     <button
-                        onClick={() => openUrl('https://github.com/jimuzhe/tiez-clipboard')}
+                        onClick={() => openUrl('https://github.com/shen1950/tiez-clipboard')}
                         style={{
                             fontSize: '11px',
                             color: 'var(--accent-color)',

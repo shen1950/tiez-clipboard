@@ -690,6 +690,17 @@ const App = () => {
     };
   }, [openFileTransfer]);
 
+  // Tray menu / tray click actions ask the app to open the settings window.
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const unlisten = listen("open-settings-request", () => {
+      openSettingsWindow();
+    });
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, []);
+
   useAppBootstrap({
     fetchEffectiveTransferPath,
     setDataPath,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ChevronLeft, X } from "lucide-react";
+import { X } from "lucide-react";
 import { translations } from "../../../locales";
 import SettingsPanel from "./SettingsPanel";
 import ToastContainer from "../../../shared/components/ToastContainer";
@@ -32,8 +32,6 @@ const SettingsWindow = () => {
     const {
         appSettings,
         setAppSettings,
-        settingsSubpage,
-        setSettingsSubpage,
         setCollapsedGroups,
         settingsLoaded,
         language,
@@ -331,7 +329,6 @@ const SettingsWindow = () => {
         settingsWindow?.close().catch(() => { });
     }, [settingsWindow]);
 
-    const isSubpage = settingsSubpage !== "home";
 
     useEffect(() => {
         document.title = t("settings");
@@ -341,16 +338,8 @@ const SettingsWindow = () => {
         <div className="settings-window-root">
             <header className="settings-window-header">
                 <div className="settings-window-drag" data-tauri-drag-region>
-                    {isSubpage && (
-                        <button
-                            className="btn-icon window-no-drag"
-                            onClick={() => setSettingsSubpage("home")}
-                        >
-                            <ChevronLeft size={16} />
-                        </button>
-                    )}
                     <span className="settings-window-title">
-                        {settingsSubpage === "advanced" ? t("advanced_settings") : t("settings")}
+                        {t("settings")}
                     </span>
                 </div>
                 <button className="btn-icon window-no-drag" title={t("close")} onClick={closeWindow}>

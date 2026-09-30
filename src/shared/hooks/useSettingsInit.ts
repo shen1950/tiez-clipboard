@@ -46,7 +46,7 @@ export const useSettingsInit = ({
           console.log("[THEME DEBUG] app.color_mode from DB:", result["app.color_mode"]);
 
           setAppSettings(result);
-          if (result["app.hotkey"]) setHotkey(result["app.hotkey"]);
+          if (result["app.hotkey"] !== undefined) setHotkey(result["app.hotkey"]);
 
           const loadedTheme = normalizeThemeId(result["app.theme"] || DEFAULT_THEME);
           const loadedColorMode = result["app.color_mode"] || "system";

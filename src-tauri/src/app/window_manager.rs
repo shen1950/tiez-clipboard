@@ -9,7 +9,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::Foundation::{HWND, POINT};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+    GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST,
+    HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -471,6 +472,53 @@ pub fn restore_last_focus(_app_handle: AppHandle) -> Result<(), String> {
         }
         WindowExt::force_focus_window(HWND(last_hwnd_val as _));
         std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+    Ok(())
+}
+
+/// Forces a window to the foreground, even when the TieZ process doesn't own
+/// the foreground. Windows denies SetForegroundWindow to background processes
+/// and drops freshly shown windows to the bottom of the z-order, which made
+/// the settings window "flash and sink" when opened from the clipboard popup.
+#[tauri::command]
+pub fn force_window_foreground(app_handle: AppHandle, label: String) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+
+        #[cfg(windows)]
+        {
+            if let Ok(hwnd_raw) = window.hwnd() {
+                let hwnd = HWND(hwnd_raw.0);
+                unsafe {
+                    // Raise above every normal window without needing
+                    // activation rights, then move it back to the normal band
+                    // (HWND_NOTOPMOST) so it stays coverable like any regular
+                    // window instead of floating above everything forever.
+                    let _ = SetWindowPos(
+                        hwnd,
+                        Some(HWND_TOPMOST),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE,
+                    );
+                    let _ = SetWindowPos(
+                        hwnd,
+                        Some(HWND_NOTOPMOST),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE,
+                    );
+                }
+                WindowExt::force_focus_window(hwnd);
+            }
+        }
+
+        let _ = window.set_focus();
     }
     Ok(())
 }

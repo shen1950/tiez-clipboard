@@ -214,10 +214,12 @@ export const useHotkeyConfig = ({
 
     if (isRecording || isRecordingSequential || isRecordingRich || isRecordingSearch) {
       const unlisten = listen<string>("hotkey-recorded", (event) => {
-        if (isRecording) updateHotkey(event.payload);
-        if (isRecordingSequential) updateSequentialHotkey(event.payload);
-        if (isRecordingRich) updateRichPasteHotkey(event.payload);
-        if (isRecordingSearch) updateSearchHotkey(event.payload);
+        // Windows records through the native hook, which consumes the DOM key event.
+        const hotkey = /^(Backspace|Delete)$/i.test(event.payload) ? "" : event.payload;
+        if (isRecording) updateHotkey(hotkey);
+        if (isRecordingSequential) updateSequentialHotkey(hotkey);
+        if (isRecordingRich) updateRichPasteHotkey(hotkey);
+        if (isRecordingSearch) updateSearchHotkey(hotkey);
       });
 
       const unlistenCancel = listen("recording-cancelled", () => {

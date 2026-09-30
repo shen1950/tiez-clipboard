@@ -295,9 +295,12 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                             <span className="item-label">{props.t('rich_paste_hotkey_label')}</span>
                             <span className="hint">{props.isRecordingRich ? props.t('hotkey_recording_esc') : props.t('hotkey_click_hint')}</span>
                         </div>
-                        <div
+                        <div className="hotkey-controls">
+                            <div
                             className={`key-group ${props.isRecordingRich ? 'recording' : ''}`}
-                            onClick={(e) => { props.setIsRecordingRich(true); e.currentTarget.focus(); }}
+                            onClick={(e) => { props.setIsRecording(false); props.setIsRecordingSequential(false); props.setIsRecordingRich(false); props.setIsRecordingSearch(false); props.setIsRecordingRich(true); e.currentTarget.focus(); }}
+                            role="button"
+                            aria-label={props.t('rich_paste_hotkey_label')}
                             tabIndex={0}
                             onKeyDown={(e) => {
                                 if (!props.isRecordingRich) return;
@@ -309,7 +312,7 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                     return;
                                 }
 
-                                if (e.key === 'Backspace' || e.key === 'Delete') {
+                                if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
                                     props.updateRichPasteHotkey('');
                                     props.setIsRecordingRich(false);
                                     return;
@@ -334,15 +337,29 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                 renderHotkeyCaps(props.richPasteHotkey)
                             )}
                         </div>
+                            <button
+                                type="button"
+                                className="hotkey-clear"
+                                disabled={!props.richPasteHotkey && !props.isRecordingRich}
+                                aria-label={props.t('hotkey_clear') + ' ' + props.t('rich_paste_hotkey_label')}
+                                title={props.t('hotkey_clear_hint')}
+                                onClick={() => { props.setIsRecordingRich(false); props.updateRichPasteHotkey(''); }}
+                            >
+                                {props.t('hotkey_clear')}
+                            </button>
+                        </div>
                     </div>
                     <div className="setting-item">
                         <div className="item-label-group">
                             <span className="item-label">{props.t('search_hotkey_label')}</span>
                             <span className="hint">{props.isRecordingSearch ? props.t('hotkey_recording_esc') : props.t('hotkey_click_hint')}</span>
                         </div>
-                        <div
+                        <div className="hotkey-controls">
+                            <div
                             className={`key-group ${props.isRecordingSearch ? 'recording' : ''}`}
-                            onClick={(e) => { props.setIsRecordingSearch(true); e.currentTarget.focus(); }}
+                            onClick={(e) => { props.setIsRecording(false); props.setIsRecordingSequential(false); props.setIsRecordingRich(false); props.setIsRecordingSearch(false); props.setIsRecordingSearch(true); e.currentTarget.focus(); }}
+                            role="button"
+                            aria-label={props.t('search_hotkey_label')}
                             tabIndex={0}
                             onKeyDown={(e) => {
                                 if (!props.isRecordingSearch) return;
@@ -354,7 +371,7 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                     return;
                                 }
 
-                                if (e.key === 'Backspace' || e.key === 'Delete') {
+                                if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
                                     props.updateSearchHotkey('');
                                     props.setIsRecordingSearch(false);
                                     return;
@@ -378,6 +395,17 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                             ) : (
                                 renderHotkeyCaps(props.searchHotkey)
                             )}
+                        </div>
+                            <button
+                                type="button"
+                                className="hotkey-clear"
+                                disabled={!props.searchHotkey && !props.isRecordingSearch}
+                                aria-label={props.t('hotkey_clear') + ' ' + props.t('search_hotkey_label')}
+                                title={props.t('hotkey_clear_hint')}
+                                onClick={() => { props.setIsRecordingSearch(false); props.updateSearchHotkey(''); }}
+                            >
+                                {props.t('hotkey_clear')}
+                            </button>
                         </div>
                     </div>
                     <div className="setting-item">
@@ -483,10 +511,13 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                 <span className="item-label">{props.t('sequential_paste_hotkey_label')}</span>
                                 <span className="hint">{props.isRecordingSequential ? props.t('hotkey_recording_esc') : props.t('hotkey_click_hint')}</span>
                             </div>
+                            <div className="hotkey-controls">
                             <div
                                 className={`key-group ${props.isRecordingSequential ? 'recording' : ''}`}
-                                onClick={(e) => { props.setIsRecordingSequential(true); e.currentTarget.focus(); }}
-                                tabIndex={0}
+                                onClick={(e) => { props.setIsRecording(false); props.setIsRecordingSequential(false); props.setIsRecordingRich(false); props.setIsRecordingSearch(false); props.setIsRecordingSequential(true); e.currentTarget.focus(); }}
+                                role="button"
+                            aria-label={props.t('sequential_paste_hotkey_label')}
+                            tabIndex={0}
                                 onKeyDown={(e) => {
                                     if (!props.isRecordingSequential) return;
                                     e.preventDefault();
@@ -497,7 +528,7 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                         return;
                                     }
 
-                                    if (e.key === 'Backspace' || e.key === 'Delete') {
+                                    if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
                                         props.updateSequentialHotkey('');
                                         props.setIsRecordingSequential(false);
                                         return;
@@ -522,6 +553,17 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                     renderHotkeyCaps(props.sequentialHotkey)
                                 )}
                             </div>
+                            <button
+                                type="button"
+                                className="hotkey-clear"
+                                disabled={!props.sequentialHotkey && !props.isRecordingSequential}
+                                aria-label={props.t('hotkey_clear') + ' ' + props.t('sequential_paste_hotkey_label')}
+                                title={props.t('hotkey_clear_hint')}
+                                onClick={() => { props.setIsRecordingSequential(false); props.updateSequentialHotkey(''); }}
+                            >
+                                {props.t('hotkey_clear')}
+                            </button>
+                        </div>
                         </div>
                     )}
 
@@ -703,9 +745,12 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                             <span className="hint">{props.isRecording ? props.t('hotkey_recording_esc') : props.t('hotkey_click_hint')}</span>
                         </div>
 
-                        <div
+                        <div className="hotkey-controls">
+                            <div
                             className={`key-group ${props.isRecording ? 'recording' : ''}`}
-                            onClick={(e) => { props.setIsRecording(true); e.currentTarget.focus(); }}
+                            onClick={(e) => { props.setIsRecording(false); props.setIsRecordingSequential(false); props.setIsRecordingRich(false); props.setIsRecordingSearch(false); props.setIsRecording(true); e.currentTarget.focus(); }}
+                            role="button"
+                            aria-label={props.t('global_hotkey')}
                             tabIndex={0}
                             onKeyDown={(e) => {
                                 if (!props.isRecording) return;
@@ -717,7 +762,7 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                     return;
                                 }
 
-                                if (e.key === 'Backspace' || e.key === 'Delete') {
+                                if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
                                     props.updateHotkey('');
                                     props.setIsRecording(false);
                                     return;
@@ -741,6 +786,17 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                             ) : (
                                 renderHotkeyCaps(props.hotkey)
                             )}
+                        </div>
+                            <button
+                                type="button"
+                                className="hotkey-clear"
+                                disabled={!props.hotkey && !props.isRecording}
+                                aria-label={props.t('hotkey_clear') + ' ' + props.t('global_hotkey')}
+                                title={props.t('hotkey_clear_hint')}
+                                onClick={() => { props.setIsRecording(false); props.updateHotkey(''); }}
+                            >
+                                {props.t('hotkey_clear')}
+                            </button>
                         </div>
                     </div>
 
