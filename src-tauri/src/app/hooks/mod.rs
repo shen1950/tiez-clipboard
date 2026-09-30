@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
-use crate::app::window_manager::{hide_window_cmd, toggle_window};
+use crate::app::window_manager::{dismiss_clipboard_window, toggle_window};
 use crate::app_state::SettingsState;
 use crate::global_state::*;
 use crate::infrastructure::windows_ext::WindowExt;
@@ -453,7 +453,7 @@ pub unsafe extern "system" fn mouse_proc(n_code: i32, w_param: WPARAM, l_param: 
                                         // Pinned: Just reset focusable state to ensure we don't retain focus
                                         let _ = window.set_focusable(false);
                                     } else {
-                                        let _ = hide_window_cmd(handle.clone());
+                                        dismiss_clipboard_window(handle);
                                     }
                                 }
                             }

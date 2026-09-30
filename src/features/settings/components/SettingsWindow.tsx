@@ -331,15 +331,15 @@ const SettingsWindow = () => {
 
 
     useEffect(() => {
-        document.title = t("settings");
-    }, [t]);
+        document.title = "TieZ-GuLing";
+    }, []);
 
     return (
         <div className="settings-window-root">
             <header className="settings-window-header">
                 <div className="settings-window-drag" data-tauri-drag-region>
                     <span className="settings-window-title">
-                        {t("settings")}
+                        TieZ-GuLing
                     </span>
                 </div>
                 <button className="btn-icon window-no-drag" title={t("close")} onClick={closeWindow}>

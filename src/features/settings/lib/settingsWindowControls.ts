@@ -58,7 +58,7 @@ export const openSettingsWindow = async (): Promise<void> => {
             }
             const win = new Ctor(SETTINGS_WINDOW_LABEL, {
                 url: "index.html?window=settings",
-                title: "TieZ Settings",
+                title: "TieZ-GuLing",
                 width: 980,
                 height: 720,
                 minWidth: 720,
@@ -86,8 +86,6 @@ export const openSettingsWindow = async (): Promise<void> => {
                 });
             });
             await forceSettingsForeground();
-            // WebView2 settles after init and can re-order windows; re-assert.
-            setTimeout(() => { void forceSettingsForeground(); }, 250);
         } catch (err) {
             console.error("openSettingsWindow failed", err);
         } finally {

@@ -2,7 +2,7 @@
 use crate::app::hooks::{keyboard_proc, mouse_proc};
 #[cfg(target_os = "windows")]
 use crate::app::system::tray_subclass_proc;
-use crate::app::window_manager::{release_win_keys, restore_last_focus, toggle_window};
+use crate::app::window_manager::toggle_window;
 use crate::app_state::{
     AppDataDir, EncryptionQueueState, PasteQueue, SessionHistory, SettingsState,
 };
@@ -1459,8 +1459,10 @@ fn handle_blur(window: &tauri::Window) {
             if !IGNORE_BLUR.load(Ordering::Relaxed) && !WINDOW_PINNED.load(Ordering::Relaxed) {
                 let _ = w.hide();
                 NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
-                release_win_keys();
-                let _ = restore_last_focus(w.app_handle().clone());
+                NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
+                // Focus already belongs to the window the user selected (which
+                // may be Settings). Restoring the paste target here steals it
+                // back after the blur delay and buries the newly opened window.
             }
         }
     });

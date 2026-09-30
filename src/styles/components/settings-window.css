@@ -15,7 +15,10 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--spacing-sm);
-    padding: 6px var(--spacing-md);
+    height: 36px;
+    padding: 0 8px 0 16px;
+    border-bottom: 1px solid var(--panel-divider-color, var(--border-color));
+    box-shadow: none;
 }
 
 .settings-window-drag {
@@ -24,7 +27,7 @@
     gap: 6px;
     flex: 1;
     min-width: 0;
-    min-height: 24px;
+    align-self: stretch;
     cursor: grab;
 }
 
@@ -33,15 +36,29 @@
 }
 
 .settings-window-title {
-    font-family: var(--title-font-family);
-    font-weight: var(--title-font-weight);
-    letter-spacing: var(--title-letter-spacing);
+    font-family: inherit;
+    font-weight: 600;
+    letter-spacing: 0;
     color: var(--text-primary);
-    font-size: var(--title-font-size);
+    font-size: 13px;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.settings-window-header > .btn-icon {
+    width: 30px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+}
+.settings-window-header > .btn-icon:hover {
+    background: var(--bg-element);
 }
 
 .settings-window-main {
@@ -50,6 +67,8 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* This space stays visible even when a category has a long scroll area. */
+    padding-bottom: 14px;
 }
 
 .settings-window-main .settings-view {
@@ -72,15 +91,14 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border-top: 1px solid var(--panel-divider-color, var(--border-color));
 }
 
 .settings-sidebar {
-    flex: 0 0 190px;
+    flex: 0 0 208px;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 16px 10px;
+    padding: 18px 12px 12px;
     overflow-y: auto;
     border-right: 1px solid var(--panel-divider-color, var(--border-color));
     background: var(--bg-panel);
@@ -99,7 +117,7 @@
     background: transparent;
     box-shadow: none;
     text-align: left;
-    color: var(--text-secondary);
+    color: var(--text-primary);
     font: inherit;
     /* Match the right-hand setting labels (14px, semibold). */
     font-size: var(--font-size-md);
@@ -113,7 +131,7 @@
 .settings-category[aria-current="page"] {
     background: var(--bg-element);
     color: var(--accent-color);
-    font-weight: 700;
+    font-weight: 600;
 }
 .settings-category[aria-current="page"]::before {
     content: "";
@@ -140,12 +158,12 @@
 }
 .settings-detail-heading {
     flex: 0 0 auto;
-    padding: 24px 28px 16px;
+    padding: 22px 28px 18px;
 }
 .settings-detail-heading h2 {
     margin: 0;
     font-family: inherit;
-    font-size: 21px;
+    font-size: 20px;
     font-weight: 650;
     color: var(--text-primary);
 }
@@ -159,6 +177,9 @@
     scrollbar-gutter: stable;
 }
 .settings-section[hidden] { display: none !important; }
+.settings-window-root .setting-item span.item-label {
+    font-weight: 600;
+}
 .settings-section > .settings-group {
     margin: 0;
     border: none;
@@ -195,7 +216,7 @@
 .settings-section-about { padding-top: 16px; }
 
 @media (max-width: 800px) {
-    .settings-sidebar { flex-basis: 168px; padding: 12px 8px; }
+    .settings-sidebar { flex-basis: 184px; padding: 16px 8px 12px; }
     /* Keep the 14px nav font at narrow widths too so both columns match. */
     .settings-category { gap: 8px; padding: 9px 10px; }
     .settings-detail-heading { padding: 20px 18px 12px; }

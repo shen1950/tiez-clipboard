@@ -418,16 +418,20 @@ pub fn activate_window_focus(app_handle: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn hide_window_cmd(app_handle: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    WindowExt::release_win_keys();
+    dismiss_clipboard_window(&app_handle);
+    restore_last_focus(app_handle)
+}
+
+/// Passive dismissal must leave focus with the user's newly selected window.
+pub fn dismiss_clipboard_window(app_handle: &AppHandle) {
     if let Some(window) = app_handle.get_webview_window("main") {
-        #[cfg(target_os = "windows")]
-        WindowExt::release_win_keys();
         let _ = window.set_focusable(false);
         let _ = window.hide();
         NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
         NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
-        let _ = restore_last_focus(app_handle.clone());
     }
-    Ok(())
 }
 
 #[tauri::command]
