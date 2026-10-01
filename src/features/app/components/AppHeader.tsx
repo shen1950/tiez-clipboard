@@ -40,6 +40,7 @@ interface AppHeaderProps {
   showTagFilter: boolean;
   setShowTagFilter: (val: boolean) => void;
   allTags: string[];
+  tagColors: Record<string, string>;
   searchIsFocused: boolean;
   setSearchIsFocused: (val: boolean) => void;
   setEditingTagsId: (val: number | null) => void;
@@ -76,6 +77,7 @@ const AppHeader = ({
   showTagFilter,
   setShowTagFilter,
   allTags,
+  tagColors,
   searchIsFocused,
   setSearchIsFocused,
   setEditingTagsId,
@@ -233,7 +235,8 @@ const AppHeader = ({
                     <div className="tags-label">{t('tags') || "Tags"}</div>
                     <div className="tags-list">
                       {allTags.map(tag => {
-                        const tagBackground = getTagColor(tag, theme);
+                        // Prefer the color saved in tag management; fall back to the generated one
+                        const tagBackground = tagColors?.[tag] || getTagColor(tag, theme);
                         return (
                           <span
                             className="tag-chip"

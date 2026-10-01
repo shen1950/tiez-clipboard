@@ -29,6 +29,10 @@ pub struct PipelineContext {
     pub should_stop: bool,
     pub pending_removals: Vec<i64>,
     pub reuse_session_id: Option<i64>,
+    /// Set when a duplicate capture was merged into an existing record
+    /// (duplicate mode "touch_old"): PersistenceStage must not save again,
+    /// DistributionStage still broadcasts the refreshed entry.
+    pub skip_persistence: bool,
 }
 
 impl PipelineContext {
@@ -53,6 +57,7 @@ impl PipelineContext {
             should_stop: false,
             pending_removals: Vec::new(),
             reuse_session_id: None,
+            skip_persistence: false,
         }
     }
 }
@@ -311,7 +316,19 @@ impl PipelineStage for ValidationStage {
         }
 
         // Deduplication
-        if settings.deduplicate.load(Ordering::Relaxed) {
+        // Modes:
+        // - "delete_old": remove the old record, insert the fresh capture at the top
+        // - "touch_old":  keep the old record (tags, pin state, source app) and move it
+        //                 to the top by refreshing its timestamp; no new record is added
+        // - "off":        keep both records untouched
+        let duplicate_mode = settings
+            .duplicate_mode
+            .lock()
+            .map(|mode| mode.clone())
+            .unwrap_or_else(|_| "delete_old".to_string());
+
+        if duplicate_mode != "off" {
+            let delete_old_mode = duplicate_mode == "delete_old";
             let persistent_enabled = settings.persistent.load(Ordering::Relaxed);
             let db_state = ctx.app_handle.state::<DbState>();
             let conn = db_state.conn.lock().unwrap();
@@ -399,12 +416,41 @@ impl PipelineStage for ValidationStage {
                 }
             }
 
+            // Never merge into a record that only lives in the recycle bin
+            if let Some(id) = existing_id {
+                let recycled = db_state
+                    .repo
+                    .get_entry_by_id_with_conn(&conn, id)
+                    .ok()
+                    .flatten()
+                    .map(|e| e.deleted_at.is_some())
+                    .unwrap_or(true);
+                if recycled {
+                    existing_id = None;
+                }
+            }
+
             if persistent_enabled {
                 if let Some(id) = existing_id {
-                    // Instead of deleting, we set the entry ID so PersistenceStage performs an UPDATE
-                    // This ensures the item is "moved to top" without risking data loss
-                    let entry_mut = ctx.entry.as_mut().unwrap();
-                    entry_mut.id = id;
+                    if delete_old_mode {
+                        // Mode ①: hard-delete the old record (clearing its attachment files
+                        // and tags); PersistenceStage then inserts the fresh capture.
+                        let app_data_dir = ctx.app_handle.state::<AppDataDir>();
+                        let data_dir = app_data_dir.0.lock().unwrap().clone();
+                        let _ = db_state.repo.delete_with_conn(&conn, id, Some(&data_dir));
+                        ctx.pending_removals.push(id);
+                    } else if let Ok(Some(mut old_entry)) =
+                        db_state.repo.get_entry_by_id_with_conn(&conn, id)
+                    {
+                        // Mode ②: refresh the old record in place. Content, tags, pin state
+                        // and source app stay exactly as they were; only the sort timestamp
+                        // moves to now.
+                        let timestamp = ctx.entry.as_ref().unwrap().timestamp;
+                        let _ = db_state.repo.touch_entry_with_conn(&conn, id, timestamp);
+                        old_entry.timestamp = timestamp;
+                        *ctx.entry.as_mut().unwrap() = old_entry;
+                        ctx.skip_persistence = true;
+                    }
                 }
             }
 
@@ -450,11 +496,15 @@ impl PipelineStage for ValidationStage {
             }
             if !persistent_enabled {
                 if let Some(reuse_id) = reuse_session_id {
-                    ctx.reuse_session_id = Some(reuse_id);
-                    if let Some(entry_mut) = ctx.entry.as_mut() {
-                        entry_mut.id = reuse_id;
+                    if !delete_old_mode {
+                        ctx.reuse_session_id = Some(reuse_id);
+                        if let Some(entry_mut) = ctx.entry.as_mut() {
+                            entry_mut.id = reuse_id;
+                        }
+                        removed_ids.retain(|id| *id != reuse_id);
                     }
-                    removed_ids.retain(|id| *id != reuse_id);
+                    // Mode ①: no reuse — the old session copy is removed and the fresh
+                    // capture is added as a brand-new session item.
                 }
             }
             ctx.pending_removals.extend(removed_ids);
@@ -466,6 +516,11 @@ impl PipelineStage for ValidationStage {
 pub struct PersistenceStage;
 impl PipelineStage for PersistenceStage {
     fn process(&self, ctx: &mut PipelineContext) {
+        // Duplicate capture merged into an existing record (mode "touch_old"):
+        // the record was already refreshed, saving again would overwrite it.
+        if ctx.skip_persistence {
+            return;
+        }
         let entry = ctx.entry.as_mut().unwrap();
         let settings = ctx.app_handle.state::<SettingsState>();
         let db_state = ctx.app_handle.state::<DbState>();

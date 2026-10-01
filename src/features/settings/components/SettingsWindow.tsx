@@ -66,7 +66,7 @@ const SettingsWindow = () => {
         showAppBorder,
         clipboardItemFontSize,
         clipboardTagFontSize,
-        deduplicate,
+        duplicateMode,
         captureFiles,
         captureRichText,
         fileTransferAutoCopy,
@@ -184,7 +184,7 @@ const SettingsWindow = () => {
 
     useSettingsSync({
         settingsLoaded,
-        deduplicate,
+        duplicateMode,
         saveAppSetting,
         captureFiles,
         captureRichText,

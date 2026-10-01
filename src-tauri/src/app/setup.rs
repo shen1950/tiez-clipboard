@@ -216,6 +216,7 @@ pub struct StartupSettings {
     pub capture_files: bool,
     pub capture_rich_text: bool,
     pub deduplicate: bool,
+    pub duplicate_mode: String,
     pub auto_copy_file: bool,
     pub silent_start: bool,
     pub delete_after_paste: bool,
@@ -267,6 +268,29 @@ fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
             .unwrap_or(Some("true".to_string()))
             .map(|v| v == "true")
             .unwrap_or(true),
+        duplicate_mode: {
+            // Migrate the legacy boolean toggle once: ON -> touch_old (keeps the record and
+            // its tags/pins when a duplicate is copied), OFF -> off. New installs are seeded
+            // with app.duplicate_mode so this branch only runs for pre-migration databases.
+            let stored = repo.get("app.duplicate_mode").unwrap_or(None);
+            let mode = match stored.as_deref() {
+                Some("delete_old") | Some("touch_old") | Some("off") => {
+                    stored.unwrap().clone()
+                }
+                other => {
+                    let legacy_on = repo
+                        .get("app.deduplicate")
+                        .unwrap_or(Some("true".to_string()))
+                        .map(|v| v == "true")
+                        .unwrap_or(true)
+                        || other == Some("true");
+                    let migrated = if legacy_on { "touch_old" } else { "off" };
+                    let _ = repo.set("app.duplicate_mode", migrated);
+                    migrated.to_string()
+                }
+            };
+            mode
+        },
         auto_copy_file: repo
             .get("file_transfer_auto_copy")
             .unwrap_or(Some("false".to_string()))
@@ -394,6 +418,7 @@ fn setup_state(
 
     app.manage(SettingsState {
         deduplicate: AtomicBool::new(s.deduplicate),
+        duplicate_mode: std::sync::Mutex::new(s.duplicate_mode.clone()),
         persistent: AtomicBool::new(s.persistent),
         file_server_auto_close: AtomicBool::new(s.auto_close_server),
         theme: std::sync::Mutex::new(s.theme.clone()),

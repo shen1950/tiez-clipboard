@@ -682,6 +682,23 @@ impl SqliteClipboardRepository {
         Ok(())
     }
 
+    /// Move-to-top for duplicate captures: refresh the sort timestamp and use
+    /// count while deliberately leaving content, tags, pin state and source
+    /// app untouched.
+    pub fn touch_entry_with_conn(
+        &self,
+        conn: &Connection,
+        id: i64,
+        timestamp: i64,
+    ) -> Result<(), String> {
+        conn.execute(
+            "UPDATE clipboard_history SET timestamp = ?1, use_count = use_count + 1 WHERE id = ?2",
+            params![timestamp, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn get_entry_by_id_with_conn(
         &self,
         conn: &Connection,
@@ -1301,12 +1318,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
 
     fn touch_entry(&self, id: i64, timestamp: i64) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "UPDATE clipboard_history SET timestamp = ? WHERE id = ?",
-            params![timestamp, id],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        self.touch_entry_with_conn(&conn, id, timestamp)
     }
 
     fn toggle_pin(&self, id: i64, is_pinned: bool) -> Result<(), String> {

@@ -6,6 +6,9 @@ use std::sync::Mutex;
 
 pub struct SettingsState {
     pub deduplicate: AtomicBool,
+    /// Duplicate handling mode: "delete_old" (remove old record, insert new),
+    /// "touch_old" (keep old record, move it to top), "off" (keep both).
+    pub duplicate_mode: Mutex<String>,
     pub persistent: AtomicBool,
     pub file_server_auto_close: AtomicBool,
     pub theme: Mutex<String>,

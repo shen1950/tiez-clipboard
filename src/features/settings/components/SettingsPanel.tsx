@@ -6,7 +6,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { HelpCircle, Settings, Clipboard, Palette, Radio, Cloud, Sparkles, Send, AppWindow, Database, SlidersHorizontal, Info, Store } from "lucide-react";
 import SettingsNavigation, { type SettingsCategory } from "./SettingsNavigation";
 import type { Locale } from "../../../shared/types";
-import type { DefaultAppsMap, InstalledAppOption, SettingsSubpage, CloudSyncContentPrefs } from "../../app/types";
+import type { DefaultAppsMap, InstalledAppOption, SettingsSubpage, CloudSyncContentPrefs, DuplicateMode } from "../../app/types";
 import type { AiProfile, AiProfileStatusMap, AppCleanupPolicy, EditableAiProfile } from "../types";
 import AppSelectorModal from "./AppSelectorModal";
 // Removed UpdateModal imports
@@ -45,7 +45,7 @@ interface SettingsPanelProps {
     persistent: boolean;
     persistentLimitEnabled: boolean;
     persistentLimit: number;
-    deduplicate: boolean;
+    duplicateMode: DuplicateMode;
     captureFiles: boolean;
     captureRichText: boolean;
     richTextSnapshotPreview: boolean;
@@ -160,7 +160,7 @@ interface SettingsPanelProps {
     setPersistent: (val: boolean) => void;
     setPersistentLimitEnabled: (val: boolean) => void;
     setPersistentLimit: (val: number) => void;
-    setDeduplicate: (val: boolean) => void;
+    setDuplicateMode: (val: DuplicateMode) => void;
     setCaptureFiles: (val: boolean) => void;
     setCaptureRichText: (val: boolean) => void;
     setRichTextSnapshotPreview: (val: boolean) => void;
@@ -247,7 +247,7 @@ interface SettingsPanelProps {
 const SettingsPanel = (props: SettingsPanelProps) => {
     const {
         t, theme, language, colorMode, showSourceAppIcon, setShowSourceAppIcon,
-        settingsSubpage, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, deleteAfterPaste, moveToTopAfterPaste,
+        settingsSubpage, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, duplicateMode, captureFiles, captureRichText, richTextSnapshotPreview, deleteAfterPaste, moveToTopAfterPaste,
         sequentialMode, sequentialHotkey, isRecordingSequential,
         richPasteHotkey, isRecordingRich, searchHotkey, isRecordingSearch, quickPasteModifier, setQuickPasteModifier,
         privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules, sensitiveMaskPrefixVisible, setSensitiveMaskPrefixVisible, sensitiveMaskSuffixVisible, setSensitiveMaskSuffixVisible, sensitiveMaskEmailDomain, setSensitiveMaskEmailDomain, cleanupRules, setCleanupRules, appCleanupPolicies, setAppCleanupPolicies, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection, recycleBinRetentionDays, setRecycleBinRetentionDays,
@@ -264,7 +264,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         fileServerEnabled, fileServerPort, localIp, availableIps, setLocalIp, actualPort, fileTransferAutoOpen, showAutoCloseHint, fileServerAutoClose, fileTransferAutoCopy, fileTransferPath,
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
-        setSettingsSubpage, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
+        setSettingsSubpage, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDuplicateMode, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
         setSequentialModeState, setIsRecordingSequential, updateSequentialHotkey,
         setIsRecordingRich, updateRichPasteHotkey,
         setIsRecordingSearch, updateSearchHotkey,
@@ -520,8 +520,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 persistentLimit={persistentLimit}
                 setPersistentLimit={setPersistentLimit}
                 saveAppSetting={saveAppSetting}
-                deduplicate={deduplicate}
-                setDeduplicate={setDeduplicate}
+                duplicateMode={duplicateMode}
+                setDuplicateMode={setDuplicateMode}
                 captureFiles={captureFiles}
                 setCaptureFiles={setCaptureFiles}
                 captureRichText={captureRichText}

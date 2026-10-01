@@ -158,8 +158,8 @@ const App = () => {
     revealedIds,
     setRevealedIds,
     setAutoStart,
-    deduplicate,
-    setDeduplicate,
+    duplicateMode,
+    setDuplicateMode,
     persistent,
     setPersistent,
     persistentLimitEnabled,
@@ -563,7 +563,7 @@ const App = () => {
     setPersistent,
     setPersistentLimitEnabled,
     setPersistentLimit,
-    setDeduplicate,
+    setDuplicateMode,
     setCaptureFiles,
     setCaptureRichText,
     setRichTextSnapshotPreview,
@@ -853,7 +853,7 @@ const App = () => {
 
   useSettingsSync({
     settingsLoaded,
-    deduplicate,
+    duplicateMode,
     saveAppSetting,
     captureFiles,
     captureRichText,
@@ -1018,6 +1018,7 @@ const App = () => {
         showTagFilter={showTagFilter}
         setShowTagFilter={setShowTagFilter}
         allTags={allTags}
+        tagColors={tagColors}
         searchIsFocused={searchIsFocused}
         setSearchIsFocused={setSearchIsFocused}
         setEditingTagsId={setEditingTagsId}

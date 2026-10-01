@@ -85,6 +85,7 @@ fn main() {
             app::commands::set_rich_paste_hotkey,
             app::commands::set_search_hotkey,
             app::commands::set_deduplication,
+            app::commands::set_duplicate_mode,
             app::commands::save_setting,
             app::commands::set_ignore_blur,
             app::commands::set_window_pinned,

@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type { DuplicateMode } from "../../features/app/types";
 
 interface UseSettingsSyncOptions {
   settingsLoaded: boolean;
-  deduplicate: boolean;
+  duplicateMode: DuplicateMode;
   saveAppSetting: (type: string, value: string) => void;
   captureFiles: boolean;
   captureRichText: boolean;
@@ -19,7 +20,7 @@ interface UseSettingsSyncOptions {
 
 export const useSettingsSync = ({
   settingsLoaded,
-  deduplicate,
+  duplicateMode,
   saveAppSetting,
   captureFiles,
   captureRichText,
@@ -34,10 +35,10 @@ export const useSettingsSync = ({
 }: UseSettingsSyncOptions) => {
   useEffect(() => {
     if (settingsLoaded) {
-      invoke("set_deduplication", { enabled: deduplicate });
-      saveAppSetting("deduplicate", String(deduplicate));
+      invoke("set_duplicate_mode", { mode: duplicateMode }).catch(console.error);
+      saveAppSetting("duplicate_mode", duplicateMode);
     }
-  }, [deduplicate, saveAppSetting, settingsLoaded]);
+  }, [duplicateMode, saveAppSetting, settingsLoaded]);
 
   useEffect(() => {
     if (settingsLoaded) {

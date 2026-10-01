@@ -90,11 +90,48 @@ pub fn set_deduplication(
     state: State<'_, crate::app_state::SettingsState>,
     enabled: bool,
 ) {
-    state.deduplicate.store(enabled, Ordering::Relaxed);
+    // Legacy boolean toggle kept for compatibility: it now drives the duplicate mode.
+    let mode = if enabled { "delete_old" } else { "off" };
+    let current = state
+        .duplicate_mode
+        .lock()
+        .map(|m| m.clone())
+        .unwrap_or_else(|_| "delete_old".to_string());
+    let effective = if enabled && current == "touch_old" {
+        current
+    } else {
+        mode.to_string()
+    };
+    set_duplicate_mode_inner(&app_handle, &state, &effective);
+}
+
+#[tauri::command]
+pub fn set_duplicate_mode(
+    app_handle: AppHandle,
+    state: State<'_, crate::app_state::SettingsState>,
+    mode: String,
+) {
+    set_duplicate_mode_inner(&app_handle, &state, &mode);
+}
+
+fn set_duplicate_mode_inner(
+    app_handle: &AppHandle,
+    state: &State<'_, crate::app_state::SettingsState>,
+    mode: &str,
+) {
+    let mode = match mode {
+        "delete_old" | "touch_old" | "off" => mode,
+        _ => "delete_old",
+    };
+    if let Ok(mut guard) = state.duplicate_mode.lock() {
+        *guard = mode.to_string();
+    }
+    state.deduplicate.store(mode != "off", Ordering::Relaxed);
     let db_state = app_handle.state::<DbState>();
+    let _ = db_state.settings_repo.set("app.duplicate_mode", mode);
     let _ = db_state
         .settings_repo
-        .set("app.deduplicate", &enabled.to_string());
+        .set("app.deduplicate", &(mode != "off").to_string());
 }
 
 #[tauri::command]
@@ -139,6 +176,19 @@ pub fn save_setting(
             settings_state
                 .capture_rich_text
                 .store(value == "true", Ordering::Relaxed);
+        }
+        "app.duplicate_mode" => {
+            let mode = match value.as_str() {
+                "delete_old" | "touch_old" | "off" => value.clone(),
+                _ => "delete_old".to_string(),
+            };
+            if let Ok(mut guard) = settings_state.duplicate_mode.lock() {
+                *guard = mode.clone();
+            }
+            settings_state
+                .deduplicate
+                .store(mode != "off", Ordering::Relaxed);
+            value = mode;
         }
         "app.silent_start" => {
             settings_state

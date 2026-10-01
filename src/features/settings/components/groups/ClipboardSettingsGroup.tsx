@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { getHotkeyDisplayTokens } from "../../../../shared/lib/hotkeyDisplay";
 import { isMacPlatform } from "../../../../shared/lib/platform";
-import type { QuickPasteModifier } from "../../../app/types";
+import type { DuplicateMode, QuickPasteModifier } from "../../../app/types";
 
 interface LabelWithHintProps {
     label: string;
@@ -24,8 +24,8 @@ interface ClipboardSettingsGroupProps {
     persistentLimit: number;
     setPersistentLimit: (val: number) => void;
     saveAppSetting: (key: string, val: string) => void;
-    deduplicate: boolean;
-    setDeduplicate: (val: boolean) => void;
+    duplicateMode: DuplicateMode;
+    setDuplicateMode: (val: DuplicateMode) => void;
     captureFiles: boolean;
     setCaptureFiles: (val: boolean) => void;
     captureRichText: boolean;
@@ -222,18 +222,29 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                     <div className="setting-item">
                         <props.LabelWithHint
                             label={props.t('merge_duplicates')}
-                            hint={props.t('merge_duplicates_hint') || "Time limit to prevent accidental multiple copies"}
+                            hint={props.t('merge_duplicates_hint') || ""}
                             hintKey="merge_duplicates"
                         />
-                        <label className="switch">
-                            <input
-                                className="cb"
-                                type="checkbox"
-                                checked={props.deduplicate}
-                                onChange={(e) => props.setDeduplicate(e.target.checked)}
-                            />
-                            <div className="toggle"><div className="left" /><div className="right" /></div>
-                        </label>
+                        <select
+                            value={props.duplicateMode}
+                            onChange={(e) => {
+                                const value = e.target.value as DuplicateMode;
+                                props.setDuplicateMode(value);
+                            }}
+                            style={{
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                border: '1px solid var(--border-color)',
+                                background: 'var(--input-bg)',
+                                color: 'var(--text-color)',
+                                fontSize: '14px',
+                                minWidth: '150px'
+                            }}
+                        >
+                            <option value="delete_old">{props.t('duplicate_mode_delete_old')}</option>
+                            <option value="touch_old">{props.t('duplicate_mode_touch_old')}</option>
+                            <option value="off">{props.t('duplicate_mode_off')}</option>
+                        </select>
                     </div>
                     <div className="setting-item">
                         <div className="item-label-group">

@@ -5,6 +5,7 @@ import type {
   AppState,
   CloudSyncContentPrefs,
   DefaultAppsMap,
+  DuplicateMode,
   InstalledAppOption,
   QuickPasteModifier,
   SettingsSubpage
@@ -43,7 +44,7 @@ export const useAppState = (): AppState => {
   const [editingTagsId, setEditingTagsId] = useState<number | null>(null);
   const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
   const [autoStart, setAutoStart] = useState(true);
-  const [deduplicate, setDeduplicate] = useState(true);
+  const [duplicateMode, setDuplicateMode] = useState<DuplicateMode>("touch_old");
   const [persistent, setPersistent] = useState(true);
   const [persistentLimitEnabled, setPersistentLimitEnabled] = useState(true);
   const [persistentLimit, setPersistentLimit] = useState<number>(1000);
@@ -221,8 +222,8 @@ export const useAppState = (): AppState => {
     setRevealedIds,
     autoStart,
     setAutoStart,
-    deduplicate,
-    setDeduplicate,
+    duplicateMode,
+    setDuplicateMode,
     persistent,
     setPersistent,
     persistentLimitEnabled,

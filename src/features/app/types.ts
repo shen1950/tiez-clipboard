@@ -7,6 +7,7 @@ export type StateSetter<T> = Dispatch<SetStateAction<T>>;
 export type InstalledAppOption = { label: string; value: string };
 export type DefaultAppsMap = Record<string, string>;
 export type QuickPasteModifier = "disabled" | "ctrl" | "alt" | "shift" | "win";
+export type DuplicateMode = "delete_old" | "touch_old" | "off";
 export type SettingsSubpage = "home" | "advanced" | "theme-store";
 
 export type CloudSyncContentPrefs = {
@@ -58,8 +59,8 @@ export interface AppState {
   setRevealedIds: StateSetter<Set<number>>;
   autoStart: boolean;
   setAutoStart: StateSetter<boolean>;
-  deduplicate: boolean;
-  setDeduplicate: StateSetter<boolean>;
+  duplicateMode: DuplicateMode;
+  setDuplicateMode: StateSetter<DuplicateMode>;
   persistent: boolean;
   setPersistent: StateSetter<boolean>;
   persistentLimitEnabled: boolean;
