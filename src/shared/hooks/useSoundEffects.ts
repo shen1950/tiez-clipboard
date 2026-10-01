@@ -96,7 +96,8 @@ export const useSoundEffects = ({
 
       const type = event.payload;
       if (type === "paste" && !pasteSoundEnabled) return;
-      const masterVol = Math.min(1, Math.max(0, soundVolume / 100));
+      // soundVolume uses the 0-1 scale (slider min=0 max=1, stored as-is in settings)
+      const masterVol = Math.min(1, Math.max(0, soundVolume));
 
       const play = () => {
         try {

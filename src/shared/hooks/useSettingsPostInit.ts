@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { MutableRefObject } from "react";
 import type { AiProfile, AppCleanupPolicy } from "../../features/settings/types";
-import type { QuickPasteModifier, CloudSyncContentPrefs } from "../../features/app/types";
+import type { QuickPasteModifier, CloudSyncContentPrefs, DuplicateMode } from "../../features/app/types";
 import { DEFAULT_CLOUD_SYNC_CONTENT_PREFS } from "../../features/app/types";
 
 const DEFAULT_AI_KEY = import.meta.env.VITE_AI_DEFAULT_API_KEY ?? "";
@@ -42,7 +42,7 @@ interface UseSettingsPostInitOptions {
   setPersistent: (val: boolean) => void;
   setPersistentLimitEnabled: (val: boolean) => void;
   setPersistentLimit: (val: number) => void;
-  setDeduplicate: (val: boolean) => void;
+  setDuplicateMode: (val: DuplicateMode) => void;
   setCaptureFiles: (val: boolean) => void;
   setCaptureRichText: (val: boolean) => void;
   setRichTextSnapshotPreview: (val: boolean) => void;
@@ -129,7 +129,7 @@ export const useSettingsPostInit = ({
   setPersistent,
   setPersistentLimitEnabled,
   setPersistentLimit,
-  setDeduplicate,
+  setDuplicateMode,
   setCaptureFiles,
   setCaptureRichText,
   setRichTextSnapshotPreview,
@@ -265,7 +265,17 @@ export const useSettingsPostInit = ({
     if (settings["app.persistent_limit"]) {
       setPersistentLimit(parseInt(settings["app.persistent_limit"]) || 1000);
     }
-    setDeduplicate(settings["app.deduplicate"] !== "false");
+    const rawDuplicateMode = settings["app.duplicate_mode"];
+    if (
+      rawDuplicateMode === "delete_old" ||
+      rawDuplicateMode === "touch_old" ||
+      rawDuplicateMode === "off"
+    ) {
+      setDuplicateMode(rawDuplicateMode);
+    } else {
+      // Legacy boolean toggle (pre-migration database): ON kept the old record, OFF kept both
+      setDuplicateMode(settings["app.deduplicate"] !== "false" ? "touch_old" : "off");
+    }
     setCaptureFiles(settings["app.capture_files"] !== "false");
     setCaptureRichText(settings["app.capture_rich_text"] === "true");
     setRichTextSnapshotPreview(settings["app.rich_text_snapshot_preview"] === "true");
@@ -392,8 +402,17 @@ export const useSettingsPostInit = ({
     if (settings["app.sequential_mode"] === "true") setSequentialModeState(true);
     if (settings["app.sound_enabled"] === "true") setSoundEnabled(true);
     setPasteSoundEnabled(settings["app.sound_paste_enabled"] !== "false");
-    if (settings["app.sound_volume"]) {
-      setSoundVolume(parseFloat(settings["app.sound_volume"]) || 1.0);
+    if (settings["app.sound_volume"] !== undefined) {
+      const raw = parseFloat(settings["app.sound_volume"]);
+      if (!Number.isFinite(raw)) {
+        setSoundVolume(1.0);
+      } else if (raw > 1) {
+        // Old versions stored a 0-100 scale (e.g. 70); normalize into the 0-1 scale
+        setSoundVolume(Math.min(1, raw / 100));
+      } else {
+        // Keep 0 (muted) as-is instead of falling back to 1.0
+        setSoundVolume(Math.max(0, raw));
+      }
     }
     if (settings["ai_enabled"]) setAiEnabled(settings["ai_enabled"] === "true");
     if (settings["ai_target_lang"]) setAiTargetLang(settings["ai_target_lang"]);
@@ -480,7 +499,7 @@ export const useSettingsPostInit = ({
     setPersistent,
     setPersistentLimitEnabled,
     setPersistentLimit,
-    setDeduplicate,
+    setDuplicateMode,
     setCaptureFiles,
     setCaptureRichText,
     setRichTextSnapshotPreview,
