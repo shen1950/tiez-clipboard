@@ -734,13 +734,14 @@ const App = () => {
 
   // Pre-warm compact preview window only where warmup is safe.
   // macOS keeps hover preview enabled but skips warmup to reduce UI stalls.
+  // Hover preview works in both normal and compact modes, so warm up unconditionally.
   useEffect(() => {
-    if (!compactMode || !isCompactPreviewWindowSupported() || !isCompactPreviewWarmupSupported()) return;
+    if (!isCompactPreviewWindowSupported() || !isCompactPreviewWarmupSupported()) return;
     const timer = setTimeout(() => {
       warmupCompactPreviewWindow();
     }, 2000); // 2s delay: avoids impacting app startup performance
     return () => clearTimeout(timer);
-  }, [compactMode]);
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;

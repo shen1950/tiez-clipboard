@@ -4,20 +4,19 @@ body.compact-preview {
     overflow: hidden;
 }
 
-/* Compact preview uses its own floating card.
-   Reset the global app shell (#root) to avoid an extra outer layer. */
+/* KwikPaste 设计：预览窗口就是预览面板本身。窗口尺寸已由主窗口按内容
+   度量在开窗前算好，这里只需让面板填满整个窗口。 */
 body.compact-preview #root {
-    width: auto !important;
-    height: auto !important;
-    display: inline-flex !important;
-    flex-direction: column;
+    width: 100vw !important;
+    height: 100vh !important;
+    display: block !important;
     background: transparent !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     border: none !important;
     box-shadow: none !important;
     border-radius: 0 !important;
-    overflow: visible !important;
+    overflow: hidden !important;
 }
 
 body.compact-preview #root::before {
@@ -31,89 +30,151 @@ body.compact-preview #root>* {
     z-index: auto !important;
 }
 
-.compact-preview-root {
-    width: auto;
-    height: auto;
-    background: transparent;
-    display: inline-flex;
-    align-items: flex-start;
-    justify-content: flex-start;
-    align-self: flex-start;
-}
-
-.compact-preview-root .compact-popover-portal.compact-preview-window {
-    position: relative;
-    width: fit-content;
-    height: fit-content;
-    min-width: var(--preview-min-width, 320px);
-    max-width: var(--preview-max-width, 560px);
-    max-height: var(--preview-max-height, 560px);
-    display: inline-flex;
-    flex-direction: column;
-    pointer-events: auto;
+.compact-preview-panel {
     box-sizing: border-box;
-    margin: 0 !important;
-    box-shadow: none !important;
-    filter: none !important;
-}
-
-/* Keep compact preview visually single-layer. */
-.compact-preview-root .compact-popover-portal.compact-preview-window .popover-meta,
-.compact-preview-root .compact-popover-portal.compact-preview-window .popover-content,
-.compact-preview-root .compact-popover-portal.compact-preview-window .popover-divider {
-    background: transparent !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-}
-
-
-.compact-preview-root .compact-popover-portal.compact-preview-media {
-    min-width: 260px;
-    max-width: var(--preview-media-max-width, 520px);
-    max-height: var(--preview-media-max-height, 360px);
-}
-
-.compact-preview-root .compact-popover-portal.compact-preview-media .popover-content {
-    max-width: var(--preview-media-max-width, 520px);
-    max-height: var(--preview-media-max-height, 360px);
-    white-space: normal;
-    overflow: hidden;
-}
-
-.compact-preview-root .compact-popover-portal.compact-preview-media img,
-.compact-preview-root .compact-popover-portal.compact-preview-media video {
-    display: block;
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-}
-
-.compact-preview-root .popover-content {
     width: 100%;
-    max-width: 100%;
-    max-height: 460px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
+    border-radius: var(--radius-window, 10px);
+    /* Standalone window with nothing behind it, while theme surfaces
+       (--bg-element) are translucent (acrylic/mica). Stack the surface color
+       over a solid backdrop so the preview card stays fully readable. */
+    background-color: #f7f7f8;
+    background-image: linear-gradient(var(--bg-element), var(--bg-element));
+    color: var(--text-primary);
+}
+
+.compact-preview-panel.dark-mode {
+    background-color: #1c222e;
+    background-image: linear-gradient(var(--bg-element), var(--bg-element));
+    border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* KwikPaste-style header: bold title + type badge, optional dims/size line.
+   Height must stay 72px to match the panel size math. */
+.compact-preview-panel .preview-header {
+    flex: none;
+    box-sizing: border-box;
+    height: 72px;
+    padding: 14px 18px 10px;
+}
+
+.compact-preview-panel .preview-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.compact-preview-panel .preview-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    min-width: 0;
+}
+
+.compact-preview-panel .preview-title span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.compact-preview-panel .preview-title svg {
+    flex: none;
+    color: var(--text-secondary);
+}
+
+.compact-preview-panel .preview-type-badge {
+    flex: none;
+    font-size: 12px;
+    line-height: 1;
+    padding: 5px 12px;
+    border-radius: 6px;
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.06));
+    color: var(--text-secondary);
+}
+
+.compact-preview-panel .preview-subtitle {
+    margin-top: 6px;
+    font-size: 12.5px;
+    line-height: 16px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.compact-preview-panel .preview-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    /* 水平与垂直留白合计各 32px，与面板尺寸算法 (IMAGE_PADDING / TEXT_V_PADDING) 严格一致。 */
+    padding: 16px;
     overflow: auto;
     word-break: break-word;
     overflow-wrap: break-word;
     white-space: pre-wrap;
+    font-size: 13px;
+    line-height: 22px;
+    scrollbar-width: thin;
+}
+
+.compact-preview-panel .preview-content::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.compact-preview-panel .preview-content::-webkit-scrollbar-thumb {
+    background: var(--border-color, rgba(0, 0, 0, 0.2));
+    border-radius: 3px;
+}
+
+/* 媒体面板在开窗前已按图片比例定好尺寸：内容必定放得下，禁用滚动。 */
+.compact-preview-panel .preview-content.preview-content-media {
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.compact-preview-panel .preview-content img,
+.compact-preview-panel .preview-content video {
+    display: block;
+    margin: 0 auto;
+    border-radius: 4px;
+}
+
+.compact-preview-panel .preview-content video {
+    background: #000;
+}
+
+.compact-preview-panel .preview-content .preview-snapshot-image {
+    margin: 0;
+    max-width: 100%;
+    height: auto;
 }
 
 /* Rich-text preview cleanup (avoid extra blank lines at top/bottom) */
-.compact-preview-root .rich-text-preview {
+.compact-preview-panel .rich-text-preview {
     margin: 0;
     padding: 0;
 }
 
-.compact-preview-root .rich-text-preview> :first-child {
+.compact-preview-panel .rich-text-preview> :first-child {
     margin-top: 0 !important;
 }
 
-.compact-preview-root .rich-text-preview> :last-child {
+.compact-preview-panel .rich-text-preview> :last-child {
     margin-bottom: 0 !important;
 }
 
-.compact-preview-root .rich-text-preview p:has(br:only-child),
-.compact-preview-root .rich-text-preview div:has(br:only-child) {
+.compact-preview-panel .rich-text-preview p:has(br:only-child),
+.compact-preview-panel .rich-text-preview div:has(br:only-child) {
     margin: 0 !important;
     padding: 0 !important;
     display: none !important;

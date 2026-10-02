@@ -1,15 +1,14 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, LogicalSize, currentMonitor } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
     FileText,
     Image as ImageIcon,
     Link as LinkIcon,
     Code,
     File,
-    Video,
-    AppWindow,
-    Clock
+    Video
 } from "lucide-react";
 import HtmlContent from "../../../shared/components/HtmlContent";
 import {
@@ -17,10 +16,12 @@ import {
     DEFAULT_THEME,
     normalizeThemeId
 } from "../../../shared/config/themes";
-import { getConciseTime } from "../../../shared/lib/utils";
+import { formatFileSize, getConciseTime } from "../../../shared/lib/utils";
 import type { Locale } from "../../../shared/types";
+import { translations } from "../../../locales";
 import { toTauriLocalImageSrc } from "../../../shared/lib/localImageSrc";
-import { getRichTextSnapshotDataUrl } from "../../../shared/lib/richTextSnapshot";
+
+type ImageSize = { width: number; height: number };
 
 type PreviewPayload = {
     contentType: string;
@@ -35,6 +36,10 @@ type PreviewPayload = {
     richTextSnapshotPreview?: boolean;
     clipboardItemFontSize?: number;
     clipboardTagFontSize?: number;
+    /** 图片原始尺寸（来自列表里已加载的 <img>），用于信息行。 */
+    imageNatural?: ImageSize | null;
+    /** 图片按面板算好的显示尺寸，CSS 按此精确渲染（KwikPaste：开窗前定尺寸）。 */
+    imageDisplay?: ImageSize;
 };
 
 const RICH_IMAGE_FALLBACK_PREFIX = "<!--TIEZ_RICH_IMAGE:";
@@ -85,13 +90,7 @@ const isSpreadsheetLikeSource = (sourceApp?: string): boolean => {
     return SPREADSHEET_SOURCE_RE.test(value);
 };
 
-const COMPACT_PREVIEW_DEBUG = false;
 const RICH_PREVIEW_DEBUG = import.meta.env.DEV;
-const compactPreviewLog = (...args: unknown[]) => {
-    if (!COMPACT_PREVIEW_DEBUG) return;
-    const ts = new Date().toISOString();
-    console.log(`[CompactPreview][Preview][${ts}]`, ...args);
-};
 const richPreviewFailureLog = (stage: string, detail?: Record<string, unknown>) => {
     if (!RICH_PREVIEW_DEBUG) return;
     console.warn("[RichTextPreview][CompactWindow]", stage, detail || {});
@@ -99,14 +98,56 @@ const richPreviewFailureLog = (stage: string, detail?: Record<string, unknown>) 
 
 const getIcon = (type: string) => {
     switch (type) {
-        case "text": return <FileText size={14} />;
-        case "image": return <ImageIcon size={14} />;
-        case "url": return <LinkIcon size={14} />;
-        case "code": return <Code size={14} />;
-        case "file": return <File size={14} />;
-        case "video": return <Video size={14} />;
-        default: return <FileText size={14} />;
+        case "text": return <FileText size={16} />;
+        case "image": return <ImageIcon size={16} />;
+        case "url": return <LinkIcon size={16} />;
+        case "code": return <Code size={16} />;
+        case "file": return <File size={16} />;
+        case "video": return <Video size={16} />;
+        default: return <FileText size={16} />;
     }
+};
+
+const TYPE_LABEL_KEYS: Record<string, string> = {
+    image: "type_image",
+    text: "type_text",
+    url: "type_url",
+    code: "type_code",
+    file: "type_file",
+    video: "type_video",
+    rich_text: "type_rich_text"
+};
+
+const resolveTypeLabel = (contentType: string, language?: Locale): string => {
+    const key = TYPE_LABEL_KEYS[contentType];
+    if (!key || !language) return contentType;
+    const dict = translations[language] as Record<string, string> | undefined;
+    return dict?.[key] || contentType;
+};
+
+// KwikPaste 式面板标题：「图片预览」/「圖片預覽」/ "Image Preview"。
+const resolvePanelTitle = (contentType: string, language?: Locale): string => {
+    const label = resolveTypeLabel(contentType, language);
+    if (language === "en") return `${label} Preview`;
+    if (language === "tw") return `${label}預覽`;
+    return `${label}预览`;
+};
+
+// 估算 base64 data URL 的字节大小（不解码）。
+const getDataUrlBytes = (dataUrl: string): number | null => {
+    const match = /^data:[^;,]+;base64,([\s\S]*)$/i.exec(dataUrl.trim());
+    if (!match) return null;
+    const base64 = match[1].replace(/\s/g, "");
+    if (!base64) return null;
+    const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+};
+
+// 图片/视频条目存的是 data URL 或附件绝对路径；远程 URL 没有本地大小可读。
+const resolveLocalPath = (content: string): string | null => {
+    const value = content.trim();
+    if (!value || /^(data:|https?:|blob:|asset:|tauri:|file:)/i.test(value)) return null;
+    return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("/") ? value : null;
 };
 
 const seekVideoPreviewFrame = (video: HTMLVideoElement | null) => {
@@ -152,38 +193,104 @@ const applyTheme = (payload: PreviewPayload) => {
     if (payload.clipboardTagFontSize) {
         root.style.setProperty("--clipboard-tag-font-size", `${payload.clipboardTagFontSize}px`);
     }
-
-    compactPreviewLog("theme applied", {
-        theme,
-        colorMode,
-        itemFontSize: payload.clipboardItemFontSize,
-        tagFontSize: payload.clipboardTagFontSize
-    });
 };
 
+/**
+ * 预览面板是纯渲染器：窗口尺寸与位置由主窗口按内容度量在开窗前算好
+ * （KwikPaste 的核心设计），这里只负责渲染内容，不做任何 resize。
+ */
 const CompactPreviewWindow = () => {
     const [payload, setPayload] = useState<PreviewPayload | null>(null);
-    const [snapshotFailed, setSnapshotFailed] = useState(false);
     const [richImageFallbackFailed, setRichImageFallbackFailed] = useState(false);
-    const richSnapshotImgRef = useRef<HTMLImageElement | null>(null);
-    const richSnapshotFallbackTimerRef = useRef<number | null>(null);
-    const containerRef = useRef<HTMLDivElement | null>(null);
-    const metaRef = useRef<HTMLDivElement | null>(null);
-    const contentRef = useRef<HTMLDivElement | null>(null);
-    const dividerRef = useRef<HTMLDivElement | null>(null);
-    const requestResizeRef = useRef<() => void>(() => {});
-    const previewBoundsRef = useRef({ width: 560, height: 560, mediaWidth: 520, mediaHeight: 360 });
-    const lastSentSizeRef = useRef<{ width: number; height: number } | null>(null);
+    const [sizeBytes, setSizeBytes] = useState<number | null>(null);
+    // 渲染结果为空时回退纯文本：富文本快照/HTML 在个别内容上可能静默渲染成空白。
+    const [plainTextFallback, setPlainTextFallback] = useState(false);
+
+    useEffect(() => {
+        getCurrentWindow()
+            .setAlwaysOnTop(true)
+            .catch((err) => console.error(err));
+        const unlisten = listen<PreviewPayload>("compact-preview-update", (event) => {
+            setPayload(event.payload);
+            applyTheme(event.payload);
+        });
+        emitTo("main", "compact-preview-mounted", true)
+            .catch((err) => console.error(err));
+        return () => {
+            unlisten.then((f) => f());
+        };
+    }, []);
+
+    useEffect(() => {
+        setRichImageFallbackFailed(false);
+        setSizeBytes(null);
+        setPlainTextFallback(false);
+    }, [payload?.content, payload?.htmlContent, payload?.richTextSnapshotPreview]);
+
+    // 兜底检查：内容区既没有图片也没有文字、但数据里有文本时，切换为纯文本渲染。
+    useEffect(() => {
+        if (!payload || plainTextFallback) return;
+        if (payload.contentType !== "rich_text") return;
+        const raf = window.requestAnimationFrame(() => {
+            const el = document.querySelector(".preview-content");
+            if (!el) return;
+            const hasImage = !!el.querySelector("img");
+            const text = (el.textContent || "").trim();
+            if (!hasImage && !text && (payload.content || payload.preview)) {
+                setPlainTextFallback(true);
+            }
+        });
+        return () => window.cancelAnimationFrame(raf);
+    });
+
+    // 附件字节大小（信息行用）：data URL 直接估算，本地文件读磁盘。
+    useEffect(() => {
+        if (!payload || (payload.contentType !== "image" && payload.contentType !== "video")) return;
+        const content = payload.content || "";
+        if (content.startsWith("data:")) {
+            const bytes = getDataUrlBytes(content);
+            if (bytes != null) setSizeBytes(bytes);
+            return;
+        }
+        const path = resolveLocalPath(content);
+        if (!path) return;
+        let cancelled = false;
+        invoke<{ size: number }>("get_file_size", { path })
+            .then((result) => {
+                if (!cancelled && result && Number.isFinite(result.size)) {
+                    setSizeBytes(result.size);
+                }
+            })
+            .catch(() => { });
+        return () => { cancelled = true; };
+    }, [payload?.contentType, payload?.content]);
+
+    const isMediaPayload = payload?.contentType === "image" || payload?.contentType === "video";
+
+    const mediaMetaText = useMemo(() => {
+        if (!isMediaPayload) return "";
+        const parts: string[] = [];
+        if (payload?.imageNatural) {
+            parts.push(`${payload.imageNatural.width} x ${payload.imageNatural.height}`);
+        }
+        if (sizeBytes != null && sizeBytes > 0) {
+            const size = formatFileSize(sizeBytes);
+            if (size) parts.push(size);
+        }
+        return parts.join(" · ");
+    }, [isMediaPayload, payload?.imageNatural, sizeBytes]);
+
+    const typeLabel = resolveTypeLabel(payload?.contentType || "text", payload?.language);
+    const panelTitle = resolvePanelTitle(payload?.contentType || "text", payload?.language);
+    const showMetaLine = !!payload?.sourceApp || !!payload?.timestamp;
+
     const richImageFallback = useMemo(() => {
         if (!payload || payload.contentType !== "rich_text" || !payload.htmlContent) return null;
         const { imagePayload } = extractRichImageFallback(payload.htmlContent);
         if (!imagePayload) return null;
         const src = resolveRichImageSrc(imagePayload);
         if (!src) return null;
-        return {
-            payload: imagePayload,
-            src
-        };
+        return { src };
     }, [payload]);
     const richTextCleanHtml = useMemo(() => {
         if (!payload || payload.contentType !== "rich_text" || !payload.htmlContent) return "";
@@ -191,256 +298,14 @@ const CompactPreviewWindow = () => {
         return cleanHtml || payload.htmlContent;
     }, [payload]);
     const richTextHasAnimatedImageFallback = useMemo(() => (
-        isAnimatedGifSrc(richImageFallback?.payload || richImageFallback?.src || null)
+        isAnimatedGifSrc(richImageFallback?.src || null)
     ), [richImageFallback]);
-    const preferHtmlRichPreview = useMemo(() => {
-        if (!payload || payload.contentType !== "rich_text" || !payload.htmlContent) return false;
-        return (
-            !richTextHasAnimatedImageFallback
-            && !richHtmlLooksTabular(richTextCleanHtml)
-            && !isSpreadsheetLikeSource(payload.sourceApp)
-        );
-    }, [payload, richTextCleanHtml, richTextHasAnimatedImageFallback]);
-    const preferGeneratedRichPreview = useMemo(() => {
-        if (!payload || payload.contentType !== "rich_text" || !payload.htmlContent) return false;
-        return (
-            !preferHtmlRichPreview
-            && (
-                !!payload.richTextSnapshotPreview
-                || richHtmlLooksTabular(richTextCleanHtml)
-                || isSpreadsheetLikeSource(payload.sourceApp)
-            )
-        );
-    }, [payload, preferHtmlRichPreview, richTextCleanHtml]);
-    const richTextSnapshotSrc = useMemo(() => {
-        if (!payload || payload.contentType !== "rich_text" || !payload.htmlContent) return null;
-        if (!preferGeneratedRichPreview) return null;
-        if (!richTextCleanHtml) return null;
-        return getRichTextSnapshotDataUrl(richTextCleanHtml, {
-            width: 560,
-            maxHeight: 1200
-        });
-    }, [payload, preferGeneratedRichPreview, richTextCleanHtml]);
-    const effectiveRichTextSnapshotSrc = snapshotFailed ? null : richTextSnapshotSrc;
     const effectiveRichImageFallbackSrc = richImageFallbackFailed ? null : (richImageFallback?.src || null);
-    // For tabular/spreadsheet sources, prefer the real clipboard bitmap image
-    // (same image you see when pasting Excel into WeChat) over the generated SVG snapshot.
-    const preferImageFallbackForTabular = (
-        richHtmlLooksTabular(richTextCleanHtml) || isSpreadsheetLikeSource(payload?.sourceApp)
-    ) && !!effectiveRichImageFallbackSrc;
-    const richTextPreviewSrc = richTextHasAnimatedImageFallback
-        ? (effectiveRichImageFallbackSrc || effectiveRichTextSnapshotSrc)
-        : preferImageFallbackForTabular
-            ? (effectiveRichImageFallbackSrc || effectiveRichTextSnapshotSrc)
-            : (effectiveRichTextSnapshotSrc || null);
-    const useSnapshotPreviewImage = !!richTextPreviewSrc && richTextPreviewSrc === effectiveRichTextSnapshotSrc;
-    const useRichImageFallback = !!richTextPreviewSrc && richTextPreviewSrc === effectiveRichImageFallbackSrc;
-
-    useEffect(() => {
-        compactPreviewLog("window mounted", { label: getCurrentWindow().label });
-        getCurrentWindow()
-            .setAlwaysOnTop(true)
-            .then(() => compactPreviewLog("setAlwaysOnTop(true) success"))
-            .catch((err) => {
-                console.error(err);
-                compactPreviewLog("setAlwaysOnTop(true) failed", err);
-            });
-        (async () => {
-            try {
-                const monitor = await currentMonitor();
-                const fallbackWidth = 1280;
-                const fallbackHeight = 720;
-                const monitorWidth = monitor?.size.width ?? fallbackWidth;
-                const monitorHeight = monitor?.size.height ?? fallbackHeight;
-                const maxWidth = Math.max(320, Math.min(560, Math.floor(monitorWidth * 0.6)));
-                const maxHeight = Math.max(240, Math.min(560, Math.floor(monitorHeight * 0.6)));
-                const mediaMaxWidth = Math.max(260, Math.min(520, maxWidth));
-                const mediaMaxHeight = Math.max(200, Math.min(360, maxHeight - 120));
-                const minWidth = Math.max(300, Math.min(380, Math.floor(maxWidth * 0.62)));
-                compactPreviewLog("resolved monitor bounds", {
-                    monitorPos: monitor?.position,
-                    monitorSize: monitor?.size,
-                    maxWidth,
-                    maxHeight,
-                    mediaMaxWidth,
-                    mediaMaxHeight,
-                    minWidth
-                });
-
-                previewBoundsRef.current = {
-                    width: maxWidth,
-                    height: maxHeight,
-                    mediaWidth: mediaMaxWidth,
-                    mediaHeight: mediaMaxHeight
-                };
-
-                const root = document.documentElement;
-                root.style.setProperty("--preview-max-width", `${maxWidth}px`);
-                root.style.setProperty("--preview-max-height", `${maxHeight}px`);
-                root.style.setProperty("--preview-media-max-width", `${mediaMaxWidth}px`);
-                root.style.setProperty("--preview-media-max-height", `${mediaMaxHeight}px`);
-                root.style.setProperty("--preview-min-width", `${minWidth}px`);
-
-                await getCurrentWindow().setSize(new LogicalSize(maxWidth, maxHeight));
-                compactPreviewLog("initial size set", { width: maxWidth, height: maxHeight });
-            } catch (err) {
-                console.error("Failed to initialize preview bounds:", err);
-                compactPreviewLog("initialize preview bounds failed", err);
-            } finally {
-                compactPreviewLog("trigger initial resize request");
-                requestResizeRef.current?.();
-            }
-        })();
-        compactPreviewLog("listen compact-preview-update");
-        const unlisten = listen<PreviewPayload>("compact-preview-update", (event) => {
-            compactPreviewLog("received compact-preview-update", {
-                contentType: event.payload.contentType,
-                contentLength: event.payload.content?.length ?? 0,
-                previewLength: event.payload.preview?.length ?? 0,
-                hasHtml: !!event.payload.htmlContent,
-                sourceApp: event.payload.sourceApp
-            });
-            setPayload(event.payload);
-            applyTheme(event.payload);
-        });
-        emitTo("main", "compact-preview-mounted", true)
-            .then(() => compactPreviewLog("emit compact-preview-mounted"))
-            .catch((err) => {
-                console.error(err);
-                compactPreviewLog("emit compact-preview-mounted failed", err);
-            });
-        return () => {
-            compactPreviewLog("window unmount cleanup");
-            unlisten.then((f) => f());
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!payload) {
-            compactPreviewLog("skip resize effect: payload empty");
-            return;
-        }
-        let raf = 0;
-        let timerA: number | null = null;
-        let timerB: number | null = null;
-        let timerC: number | null = null;
-        const updateSize = () => {
-            raf = window.requestAnimationFrame(() => {
-                const container = containerRef.current;
-                if (!container) {
-                    compactPreviewLog("skip measure: container missing");
-                    return;
-                }
-
-                const bounds = previewBoundsRef.current;
-                const maxWidth = bounds.width;
-                const maxHeight = bounds.height;
-                const minWidth =
-                    payload.contentType === "image" || payload.contentType === "video"
-                        ? 260
-                        : Math.min(bounds.width, 320);
-
-                const measuredWidth = Math.max(container.offsetWidth, container.scrollWidth);
-                const measuredHeight = Math.max(container.offsetHeight, container.scrollHeight);
-                const width = Math.min(Math.max(Math.ceil(measuredWidth), minWidth), maxWidth);
-                const height = Math.min(Math.max(Math.ceil(measuredHeight), 80), maxHeight);
-                if (width < 40 || height < 40) {
-                    compactPreviewLog("skip emit: measured size too small", {
-                        measuredWidth,
-                        measuredHeight,
-                        width,
-                        height
-                    });
-                    return;
-                }
-
-                const last = lastSentSizeRef.current;
-                if (last && Math.abs(last.width - width) <= 1 && Math.abs(last.height - height) <= 1) {
-                    return;
-                }
-                lastSentSizeRef.current = { width, height };
-                compactPreviewLog("emit compact-preview-resize", {
-                    measuredWidth,
-                    measuredHeight,
-                    width,
-                    height,
-                    minWidth,
-                    maxWidth,
-                    maxHeight
-                });
-
-                emitTo("main", "compact-preview-resize", { width, height }).catch((err) => {
-                    console.error(err);
-                    compactPreviewLog("emit compact-preview-resize failed", err);
-                });
-                getCurrentWindow()
-                    .setSize(new LogicalSize(width, height))
-                    .catch((err) => {
-                        console.error(err);
-                        compactPreviewLog("setSize in preview failed", err);
-                    });
-            });
-        };
-
-        requestResizeRef.current = updateSize;
-        compactPreviewLog("resize effect start", { contentType: payload.contentType });
-        updateSize();
-        const observer = new ResizeObserver(updateSize);
-        if (containerRef.current) observer.observe(containerRef.current);
-        if (contentRef.current) observer.observe(contentRef.current);
-        if (metaRef.current) observer.observe(metaRef.current);
-        if (dividerRef.current) observer.observe(dividerRef.current);
-        compactPreviewLog("ResizeObserver attached");
-
-        // Async render safety net: rich text/media/font loading may settle later.
-        timerA = window.setTimeout(updateSize, 50);
-        timerB = window.setTimeout(updateSize, 180);
-        timerC = window.setTimeout(updateSize, 420);
-
-        return () => {
-            if (raf) cancelAnimationFrame(raf);
-            if (timerA) window.clearTimeout(timerA);
-            if (timerB) window.clearTimeout(timerB);
-            if (timerC) window.clearTimeout(timerC);
-            observer.disconnect();
-            compactPreviewLog("resize effect cleanup");
-        };
-    }, [payload]);
-
-    useEffect(() => {
-        setSnapshotFailed(false);
-        setRichImageFallbackFailed(false);
-    }, [payload?.content, payload?.htmlContent, payload?.richTextSnapshotPreview]);
-
-    useEffect(() => {
-        if (richSnapshotFallbackTimerRef.current) {
-            window.clearTimeout(richSnapshotFallbackTimerRef.current);
-            richSnapshotFallbackTimerRef.current = null;
-        }
-        if (!useSnapshotPreviewImage) return;
-
-        // Safety net: in some environments broken SVG data urls don't always emit onError.
-        richSnapshotFallbackTimerRef.current = window.setTimeout(() => {
-            const img = richSnapshotImgRef.current;
-            if (!img || !img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0) {
-                richPreviewFailureLog("snapshot image timeout -> fallback to html", {
-                    hasImageElement: !!img,
-                    complete: img?.complete ?? false,
-                    naturalWidth: img?.naturalWidth ?? 0,
-                    naturalHeight: img?.naturalHeight ?? 0,
-                    sourceApp: payload?.sourceApp || ""
-                });
-                setSnapshotFailed(true);
-            }
-        }, 700);
-
-        return () => {
-            if (richSnapshotFallbackTimerRef.current) {
-                window.clearTimeout(richSnapshotFallbackTimerRef.current);
-                richSnapshotFallbackTimerRef.current = null;
-            }
-        };
-    }, [useSnapshotPreviewImage, effectiveRichTextSnapshotSrc, payload?.content, payload?.htmlContent]);
+    const useRichImageFallback = richTextHasAnimatedImageFallback
+        || (
+            (richHtmlLooksTabular(richTextCleanHtml) || isSpreadsheetLikeSource(payload?.sourceApp))
+            && !!effectiveRichImageFallbackSrc
+        );
 
     const content = useMemo(() => {
         if (!payload) return null;
@@ -448,19 +313,13 @@ const CompactPreviewWindow = () => {
             const src = payload.content.startsWith("data:")
                 ? payload.content
                 : (toTauriLocalImageSrc(payload.content) || payload.content);
+            // 面板在开窗前已按图片比例算好尺寸；这里用 max 约束渲染，
+            // 吸收窗口边框带来的 1-2px 误差，永不溢出、永不出现滚动条。
             return (
                 <img
                     src={src}
                     alt="preview"
-                    onLoad={() => {
-                        compactPreviewLog("image loaded, request resize");
-                        requestResizeRef.current?.();
-                    }}
-                    style={{
-                        width: "auto",
-                        height: "auto",
-                        borderRadius: "4px"
-                    }}
+                    style={{ maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto" }}
                 />
             );
         }
@@ -474,85 +333,31 @@ const CompactPreviewWindow = () => {
                     preload="metadata"
                     muted
                     playsInline
-                    onLoadedMetadata={(e) => {
-                        compactPreviewLog("video metadata loaded", {
-                            duration: e.currentTarget.duration
-                        });
-                        seekVideoPreviewFrame(e.currentTarget);
-                        requestResizeRef.current?.();
-                    }}
-                    style={{
-                        width: "auto",
-                        height: "auto",
-                        borderRadius: "4px",
-                        background: "#000"
-                    }}
+                    controls
+                    onLoadedMetadata={(e) => seekVideoPreviewFrame(e.currentTarget)}
+                    style={{ maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto" }}
                 />
             );
         }
         if (payload.contentType === "rich_text" && payload.htmlContent) {
-            if (useSnapshotPreviewImage && effectiveRichTextSnapshotSrc) {
-                compactPreviewLog("render rich_text as html snapshot image");
-                return (
-                    <img
-                        ref={richSnapshotImgRef}
-                        src={effectiveRichTextSnapshotSrc}
-                        alt="rich text snapshot preview"
-                        onLoad={() => {
-                            if (richSnapshotFallbackTimerRef.current) {
-                                window.clearTimeout(richSnapshotFallbackTimerRef.current);
-                                richSnapshotFallbackTimerRef.current = null;
-                            }
-                            compactPreviewLog("rich snapshot image loaded, request resize");
-                            requestResizeRef.current?.();
-                        }}
-                        onError={() => {
-                            if (richSnapshotFallbackTimerRef.current) {
-                                window.clearTimeout(richSnapshotFallbackTimerRef.current);
-                                richSnapshotFallbackTimerRef.current = null;
-                            }
-                            richPreviewFailureLog("snapshot image load error -> fallback to html", {
-                                srcLength: (effectiveRichTextSnapshotSrc || "").length,
-                                srcSample: (effectiveRichTextSnapshotSrc || "").slice(0, 140),
-                                sourceApp: payload.sourceApp || ""
-                            });
-                            setSnapshotFailed(true);
-                        }}
-                        style={{
-                            width: "100%",
-                            maxWidth: "100%",
-                            height: "auto",
-                            display: "block",
-                            borderRadius: "4px"
-                        }}
-                    />
-                );
-            }
-            if (useRichImageFallback && effectiveRichImageFallbackSrc) {
-                compactPreviewLog("render rich_text as fallback image");
+            // Excel 表格等"真图片"富文本：直接显示位图。
+            if (!plainTextFallback && useRichImageFallback && effectiveRichImageFallbackSrc) {
                 return (
                     <img
                         src={effectiveRichImageFallbackSrc}
                         alt="rich text preview"
-                        onLoad={() => {
-                            compactPreviewLog("rich fallback image loaded, request resize");
-                            requestResizeRef.current?.();
-                        }}
                         onError={() => {
                             richPreviewFailureLog("fallback image load error -> switch to html", {
                                 srcLength: (effectiveRichImageFallbackSrc || "").length,
-                                srcSample: (effectiveRichImageFallbackSrc || "").slice(0, 140),
                                 sourceApp: payload.sourceApp || ""
                             });
                             setRichImageFallbackFailed(true);
                         }}
-                        style={{
-                            width: "auto",
-                            height: "auto",
-                            borderRadius: "4px"
-                        }}
                     />
                 );
+            }
+            if (plainTextFallback) {
+                return payload.content || payload.preview || "";
             }
             const { cleanHtml } = extractRichImageFallback(payload.htmlContent);
             return (
@@ -562,51 +367,46 @@ const CompactPreviewWindow = () => {
                     fallbackText={payload.preview || payload.content}
                     preview={false}
                     style={{
-                        // Keep a single scrollbar on .popover-content to avoid nested scrollbars.
-                        maxHeight: "none",
-                        overflow: "visible",
                         fontSize: "var(--clipboard-item-font-size)",
-                        lineHeight: "1.5"
+                        lineHeight: "22px"
                     }}
                 />
             );
         }
         return payload.content || payload.preview || "";
-    }, [payload, effectiveRichImageFallbackSrc, effectiveRichTextSnapshotSrc]);
+    }, [payload, effectiveRichImageFallbackSrc, plainTextFallback, useRichImageFallback]);
 
     return (
-        <div className="compact-preview-root">
-            <div
-                ref={containerRef}
-                className={`compact-popover-portal compact-preview-window theme-${normalizeThemeId(payload?.theme || DEFAULT_THEME)} ${payload?.contentType === "image" ? "compact-preview-image" : ""} ${payload?.contentType === "image" || payload?.contentType === "video" || !!richTextPreviewSrc ? "compact-preview-media" : ""} ${payload?.colorMode === "dark" ? "dark-mode" : ""}`}
-                style={{
-                    display: "flex",
-                    flexDirection: "column"
-                }}
-            >
-                <div ref={metaRef} className="popover-meta">
-                    <div className="meta-row">
+        <div
+            className={`compact-preview-panel theme-${normalizeThemeId(payload?.theme || DEFAULT_THEME)} ${payload?.colorMode === "dark" ? "dark-mode" : "light-mode"}`}
+            onMouseEnter={() => {
+                emitTo("main", "compact-preview-pointer", true).catch(() => { });
+            }}
+            onMouseLeave={() => {
+                emitTo("main", "compact-preview-pointer", false).catch(() => { });
+            }}
+        >
+            <div className="preview-header">
+                <div className="preview-header-row">
+                    <div className="preview-title">
                         {getIcon(payload?.contentType || "text")}
-                        <span>{payload?.contentType || "text"}</span>
+                        <span>{panelTitle}</span>
                     </div>
-                    <div className="meta-dot">•</div>
-                    <div className="meta-row">
-                        <AppWindow size={14} />
-                        <span>{payload?.sourceApp || "Unknown"}</span>
-                    </div>
-                    <div className="meta-dot">•</div>
-                    <div className="meta-row">
-                        <Clock size={14} />
-                        <span>
-                            {payload?.timestamp && payload?.language
-                                ? getConciseTime(payload.timestamp, payload.language)
-                                : "-"}
-                        </span>
-                    </div>
+                    <span className="preview-type-badge">{typeLabel}</span>
                 </div>
-                <div ref={dividerRef} className="popover-divider" />
-                <div ref={contentRef} className="popover-content">{content}</div>
+                {(mediaMetaText || showMetaLine) && (
+                    <div className="preview-subtitle">
+                        {mediaMetaText}
+                        {mediaMetaText && showMetaLine ? " · " : ""}
+                        {payload?.sourceApp || ""}
+                        {payload?.sourceApp && payload?.timestamp && payload?.language ? " · " : ""}
+                        {payload?.timestamp && payload?.language
+                            ? getConciseTime(payload.timestamp, payload.language)
+                            : ""}
+                    </div>
+                )}
             </div>
+            <div className={`preview-content${payload?.contentType === "image" || payload?.contentType === "video" ? " preview-content-media" : ""}`}>{content}</div>
         </div>
     );
 };

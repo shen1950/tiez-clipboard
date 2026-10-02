@@ -1,7 +1,7 @@
 import { useRef, useEffect, useLayoutEffect, useState, useMemo, memo } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
+import { cursorPosition, getCurrentWindow, LogicalSize, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
     Pin,
@@ -43,6 +43,14 @@ import { getRichTextSnapshotDataUrl } from "../../../shared/lib/richTextSnapshot
 import { getFileIcon as getSystemFileIcon, peekFileIcon } from "../../../shared/lib/fileIcon";
 import { getSourceAppIcon, peekSourceAppIcon } from "../../../shared/lib/sourceAppIcon";
 import { registerCompactPreviewControls } from "../lib/compactPreviewControls";
+import {
+    PREVIEW_PANEL,
+    computePreviewPanelSize,
+    resolvePreviewMonitor,
+    cardRectToPhysical,
+    resolvePreviewPlacement,
+    type PreviewRect
+} from "../lib/previewPanelSize";
 
 const COMPACT_PREVIEW_LABEL = "compact-preview";
 const RICH_IMAGE_FALLBACK_PREFIX = "<!--TIEZ_RICH_IMAGE:";
@@ -65,13 +73,6 @@ const compactPreviewLog = (...args: unknown[]) => {
 const richPreviewFailureLog = (stage: string, detail?: Record<string, unknown>) => {
     console.warn("[RichTextPreview][MainList]", stage, detail || {});
 };
-type CompactPreviewAnchor = {
-    clientX: number;
-    clientY: number;
-    screenX: number;
-    screenY: number;
-};
-
 const extractRichImageFallback = (html?: string): { cleanHtml?: string; imagePayload?: string } => {
     if (!html) return {};
     const start = html.lastIndexOf(RICH_IMAGE_FALLBACK_PREFIX);
@@ -136,11 +137,15 @@ let compactPreviewCreating = false;
 let compactPreviewReady: Promise<WebviewWindow | null> | null = null;
 let compactPreviewMounted = false;
 let compactPreviewMountedPromise: Promise<boolean> | null = null;
-let compactPreviewResizeListener: Promise<() => void> | null = null;
-let compactPreviewPendingShow = false;
-let compactPreviewPendingAnchor: CompactPreviewAnchor | null = null;
-let compactPreviewPendingTimer: ReturnType<typeof setTimeout> | null = null;
 let compactPreviewLifecycleListenersReady: Promise<void> | null = null;
+// KwikPaste：方向只按条目判定一次并锁定，指针在卡片内横移不会让面板换边。
+const previewSideLatch = new Map<string, boolean>();
+// 最近一次摆放的面板矩形（物理 px）：隐藏定时器触发时用它判断鼠标是否悬停在面板上，
+// 不依赖预览窗口自己的鼠标事件是否送达。
+let previewPanelRectPhysical: { left: number; top: number; width: number; height: number } | null = null;
+// 离开卡片后的隐藏缓冲：卡片间移动时先不收起，进入新卡片会取消（KwikPaste 240ms）。
+const PREVIEW_HIDE_BUFFER_MS = 500;
+let previewHideTimer: ReturnType<typeof setTimeout> | null = null;
 
 const loadWebviewWindowModule = async () => import("@tauri-apps/api/webviewWindow");
 
@@ -149,200 +154,82 @@ const setIgnoreBlurSafe = (ignore: boolean) => {
     invoke("set_ignore_blur", { ignore }).catch(() => { });
 };
 
-const clearCompactPreviewPendingState = () => {
-    compactPreviewLog("clear pending state");
-    if (compactPreviewPendingTimer) {
-        clearTimeout(compactPreviewPendingTimer);
-        compactPreviewPendingTimer = null;
-    }
-    compactPreviewPendingShow = false;
-    compactPreviewPendingAnchor = null;
-};
-
-const resolveAnchorPhysical = async (
-    anchor: CompactPreviewAnchor,
-    scale: number
-): Promise<{ x: number; y: number }> => {
-    try {
-        const appWindow = getCurrentWindow();
-        const outer = await appWindow.outerPosition();
-        return {
-            x: Math.round(outer.x + anchor.clientX * scale),
-            y: Math.round(outer.y + anchor.clientY * scale)
-        };
-    } catch {
-        return {
-            x: Math.round(anchor.screenX * scale),
-            y: Math.round(anchor.screenY * scale)
-        };
+const cancelPreviewHideTimer = () => {
+    if (previewHideTimer) {
+        clearTimeout(previewHideTimer);
+        previewHideTimer = null;
     }
 };
 
-const pickPreviewPosition = (
-    anchorX: number,
-    anchorY: number,
-    widthPx: number,
-    heightPx: number,
-    monitorPos: { x: number; y: number },
-    monitorSize: { width: number; height: number },
-    margin: number,
-    offset: number,
-    avoidRect?: { left: number; top: number; right: number; bottom: number } | null
-) => {
-    const left = monitorPos.x + margin;
-    const top = monitorPos.y + margin;
-    const right = monitorPos.x + monitorSize.width - margin;
-    const bottom = monitorPos.y + monitorSize.height - margin;
-
-    const clampPoint = (p: { x: number; y: number }) => ({
-        x: Math.min(Math.max(p.x, left), right - widthPx),
-        y: Math.min(Math.max(p.y, top), bottom - heightPx)
-    });
-
-    const intersectsAvoidRect = (p: { x: number; y: number }) => {
-        if (!avoidRect) return false;
-        const previewRect = {
-            left: p.x,
-            top: p.y,
-            right: p.x + widthPx,
-            bottom: p.y + heightPx
-        };
-        return !(
-            previewRect.right <= avoidRect.left ||
-            previewRect.left >= avoidRect.right ||
-            previewRect.bottom <= avoidRect.top ||
-            previewRect.top >= avoidRect.bottom
-        );
-    };
-
-    const candidates = [
-        { x: anchorX + offset, y: anchorY + offset }, // right-bottom
-        { x: anchorX + offset, y: anchorY - heightPx - offset }, // right-top
-        { x: anchorX - widthPx - offset, y: anchorY + offset }, // left-bottom
-        { x: anchorX - widthPx - offset, y: anchorY - heightPx - offset } // left-top
-    ];
-
-    const fits = (p: { x: number; y: number }) =>
-        p.x >= left && p.y >= top && p.x + widthPx <= right && p.y + heightPx <= bottom;
-
-    for (const c of candidates) {
-        if (fits(c) && !intersectsAvoidRect(c)) return c;
-    }
-
-    if (avoidRect) {
-        const outsideCandidates = [
-            { x: avoidRect.right + offset, y: anchorY - Math.round(heightPx * 0.25) }, // right of main
-            { x: avoidRect.left - widthPx - offset, y: anchorY - Math.round(heightPx * 0.25) }, // left of main
-            { x: anchorX - Math.round(widthPx * 0.2), y: avoidRect.top - heightPx - offset }, // above main
-            { x: anchorX - Math.round(widthPx * 0.2), y: avoidRect.bottom + offset } // below main
-        ].map(clampPoint);
-
-        for (const c of outsideCandidates) {
-            if (!intersectsAvoidRect(c)) return c;
-        }
-    }
-
-    for (const c of candidates) {
-        const clamped = clampPoint(c);
-        if (!intersectsAvoidRect(clamped)) return clamped;
-    }
-
-    // Final fallback: clamp the default candidate into monitor bounds.
-    return clampPoint(candidates[0]);
-};
-
-const placeAndShowPendingCompactPreview = async (
-    widthLogical: number,
-    heightLogical: number,
-    options?: { keepPending?: boolean }
-) => {
-    if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) {
-        compactPreviewLog("skip place/show: pending state not ready", {
-            pendingShow: compactPreviewPendingShow,
-            hasWindow: !!compactPreviewWindow,
-            hasAnchor: !!compactPreviewPendingAnchor
-        });
-        return;
-    }
-
-    const appWindow = getCurrentWindow();
-    const scale = await appWindow.scaleFactor();
-    const monitor = await currentMonitor();
-    const monitorPos = monitor?.position || { x: 0, y: 0 };
-    const monitorSize = monitor?.size || { width: 1920, height: 1080 };
-    const margin = Math.round(10 * scale);
-    const offset = Math.round(12 * scale);
-
-    const widthPx = Math.round(widthLogical * scale);
-    const heightPx = Math.round(heightLogical * scale);
-    const anchorPx = await resolveAnchorPhysical(compactPreviewPendingAnchor, scale);
-    const mainOuter = await appWindow.outerPosition().catch(() => null);
-    const mainSize = await appWindow.outerSize().catch(() => null);
-    const avoidRect =
-        mainOuter && mainSize
-            ? {
-                left: mainOuter.x,
-                top: mainOuter.y,
-                right: mainOuter.x + mainSize.width,
-                bottom: mainOuter.y + mainSize.height
+const schedulePreviewHide = (hide: () => void) => {
+    cancelPreviewHideTimer();
+    previewHideTimer = setTimeout(async () => {
+        previewHideTimer = null;
+        // 面板悬停保护：鼠标还在预览面板上时绝不隐藏（即使面板自身的
+        // 鼠标事件没送达，这里也能在主窗口侧兜底）。
+        const rect = previewPanelRectPhysical;
+        if (rect) {
+            try {
+                const cursor = await cursorPosition();
+                const inside =
+                    cursor.x >= rect.left
+                    && cursor.x < rect.left + rect.width
+                    && cursor.y >= rect.top
+                    && cursor.y < rect.top + rect.height;
+                if (inside) {
+                    schedulePreviewHide(hide);
+                    return;
+                }
+            } catch {
+                // 拿不到光标位置就按原逻辑隐藏。
             }
-            : null;
+        }
+        hide();
+    }, PREVIEW_HIDE_BUFFER_MS);
+};
 
-    const target = pickPreviewPosition(
-        anchorPx.x,
-        anchorPx.y,
-        widthPx,
-        heightPx,
-        monitorPos,
-        monitorSize,
-        margin,
-        offset,
-        avoidRect
-    );
-    compactPreviewLog("place/show target resolved", {
-        widthLogical,
-        heightLogical,
-        widthPx,
-        heightPx,
-        anchorPx,
-        target,
-        avoidRect,
-        scale
-    });
+/**
+ * KwikPaste 式一次性开窗：尺寸与位置在显示前就算好，setSize → setPosition → show
+ * 一气呵成。窗口显示后不再有任何 resize 往返，所以面板不会跳、不会闪。
+ */
+const showPreviewWindowAt = async (
+    bounds: { x: number; y: number },
+    widthLogical: number,
+    heightLogical: number
+) => {
+    const previewWindow = compactPreviewWindow;
+    if (!previewWindow) return;
 
     setIgnoreBlurSafe(true);
     try {
-        await compactPreviewWindow.setPosition(new PhysicalPosition(target.x, target.y));
-        await compactPreviewWindow.show();
+        // 面板接受鼠标（可悬停、可滚动）；每次显示前再确保一次。
+        await previewWindow.setIgnoreCursorEvents(false).catch(() => { });
+        await previewWindow.setSize(new LogicalSize(widthLogical, heightLogical));
+        await previewWindow.setPosition(new PhysicalPosition(bounds.x, bounds.y));
+        await previewWindow.show();
         // Force top-most z-order refresh so preview is not occluded by the main top-most window.
         // macOS skips this toggle because frequent style-mask sync can cause UI stalls.
         if (!IS_MACOS) {
             try {
-                await compactPreviewWindow.setAlwaysOnTop(false);
-                await compactPreviewWindow.setAlwaysOnTop(true);
-                compactPreviewLog("refresh always-on-top stacking done");
+                await previewWindow.setAlwaysOnTop(false);
+                await previewWindow.setAlwaysOnTop(true);
             } catch (stackErr) {
                 compactPreviewLog("refresh always-on-top stacking failed", stackErr);
             }
         }
-        const visible = await compactPreviewWindow.isVisible().catch(() => null);
-        compactPreviewLog("preview window shown", { visible, target });
+        compactPreviewLog("preview window shown", { bounds, widthLogical, heightLogical });
     } catch (err) {
         setIgnoreBlurSafe(false);
         compactPreviewLog("preview show failed", err);
         throw err;
-    }
-    if (options?.keepPending) {
-        compactPreviewLog("keep pending state after place/show", { widthLogical, heightLogical });
-    } else {
-        clearCompactPreviewPendingState();
     }
 };
 
 const hideCompactPreviewGlobal = async () => {
     const previewWindow = compactPreviewWindow;
     compactPreviewLog("hide preview requested", { hasWindow: !!previewWindow });
-    clearCompactPreviewPendingState();
+    cancelPreviewHideTimer();
+    previewSideLatch.clear();
     setIgnoreBlurSafe(false);
 
     if (!previewWindow) return;
@@ -360,9 +247,6 @@ const hideCompactPreviewGlobal = async () => {
     }
 };
 
-const forceHideCompactPreviewWindow = () => {
-    void hideCompactPreviewGlobal();
-};
 
 const seekVideoPreviewFrame = (video: HTMLVideoElement | null) => {
     if (!video) return;
@@ -411,33 +295,6 @@ const waitForCompactPreviewMounted = async (): Promise<boolean> => {
     return compactPreviewMountedPromise;
 };
 
-const ensureCompactPreviewResizeListener = async (): Promise<void> => {
-    if (compactPreviewResizeListener) {
-        await compactPreviewResizeListener;
-        return;
-    }
-    compactPreviewLog("register compact-preview-resize listener");
-    compactPreviewResizeListener = listen<{ width: number; height: number }>(
-        "compact-preview-resize",
-        async (event) => {
-            const { width, height } = event.payload || {};
-            if (!width || !height) {
-                compactPreviewLog("ignore compact-preview-resize with invalid payload", event.payload);
-                return;
-            }
-            compactPreviewLog("received compact-preview-resize", { width, height });
-
-            try {
-                await placeAndShowPendingCompactPreview(width, height);
-            } catch (err) {
-                console.error("Failed to resize compact preview window:", err);
-                compactPreviewLog("resize handling failed", err);
-            }
-        }
-    );
-    await compactPreviewResizeListener;
-};
-
 const ensureCompactPreviewLifecycleListeners = async (): Promise<void> => {
     if (compactPreviewLifecycleListenersReady) {
         await compactPreviewLifecycleListenersReady;
@@ -446,8 +303,8 @@ const ensureCompactPreviewLifecycleListeners = async (): Promise<void> => {
 
     compactPreviewLifecycleListenersReady = (async () => {
         const lifecycleEvents = ["tauri://hide", "tauri://close-requested", "tauri://destroyed"];
-        await Promise.all(
-            lifecycleEvents.map(async (eventName) => {
+        await Promise.all([
+            ...lifecycleEvents.map(async (eventName) => {
                 try {
                     compactPreviewLog("bind lifecycle listener", eventName);
                     await listen(eventName, () => {
@@ -458,8 +315,23 @@ const ensureCompactPreviewLifecycleListeners = async (): Promise<void> => {
                     console.error(`Failed to bind compact preview lifecycle listener: ${eventName}`, err);
                     compactPreviewLog("bind lifecycle listener failed", { eventName, err });
                 }
-            })
-        );
+            }),
+            // 预览面板接受鼠标（KwikPaste 同款）：指针停在面板上时取消收起，
+            // 离开面板后按同样的缓冲收起——这样面板可以滚动、可以悬停阅读。
+            (async () => {
+                try {
+                    await listen<boolean>("compact-preview-pointer", (event) => {
+                        if (event.payload) {
+                            cancelPreviewHideTimer();
+                        } else {
+                            schedulePreviewHide(() => { void hideCompactPreviewGlobal(); });
+                        }
+                    });
+                } catch (err) {
+                    console.error("Failed to bind preview pointer listener:", err);
+                }
+            })()
+        ]);
     })();
 
     await compactPreviewLifecycleListenersReady;
@@ -480,7 +352,7 @@ const tryReuseExistingCompactPreviewWindow = async (): Promise<WebviewWindow | n
         compactPreviewMounted = true;
         compactPreviewMountedPromise = Promise.resolve(true);
         try {
-            await existing.setIgnoreCursorEvents(true);
+            await existing.setIgnoreCursorEvents(false);
         } catch { }
         try {
             await existing.setAlwaysOnTop(true);
@@ -558,7 +430,7 @@ const ensureCompactPreviewWindow = async (): Promise<WebviewWindow | null> => {
             }
 
             try {
-                await previewWindow.setIgnoreCursorEvents(true);
+                await previewWindow.setIgnoreCursorEvents(false);
             } catch (err) {
                 console.error("Failed to enable ignore cursor events:", err);
             }
@@ -595,6 +467,10 @@ const warmupCompactPreviewWindow = () => {
 
 const isCompactPreviewWindowSupported = () => COMPACT_PREVIEW_WINDOW_SUPPORTED;
 const isCompactPreviewWarmupSupported = () => COMPACT_PREVIEW_WARMUP_SUPPORTED;
+
+const forceHideCompactPreviewWindow = () => {
+    void hideCompactPreviewGlobal();
+};
 
 registerCompactPreviewControls({
     forceHide: forceHideCompactPreviewWindow,
@@ -736,7 +612,6 @@ const ClipboardItem = ({
     const richSnapshotImgRef = useRef<HTMLImageElement | null>(null);
     const richSnapshotFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const hoverAnchorRef = useRef<CompactPreviewAnchor | null>(null);
     const hoverRequestIdRef = useRef(0);
     // Rich-text HTML is fetched on demand: list/search responses no longer carry
     // html_content (it dominates storage), so visible items lazy-load it by id.
@@ -973,16 +848,18 @@ const ClipboardItem = ({
         };
     }, [item.content_type, item.file_preview_exists, singleFilePath]);
 
+    // Hover preview is available in both normal and compact modes (KwikPaste-style).
+    // Files are excluded (they show a rich card already) and sensitive-masked items
+    // are excluded so the popup never bypasses the blur.
     const compactPreviewEnabled =
-        compactMode &&
         COMPACT_PREVIEW_WINDOW_SUPPORTED &&
-        item.content_type !== "file";
+        item.content_type !== "file" &&
+        !isSensitiveHidden;
 
     const isHoverPreviewRequestCurrent = (requestId: number) => {
         const node = itemRef.current;
         return (
             hoverRequestIdRef.current === requestId &&
-            !!hoverAnchorRef.current &&
             !!node &&
             node.isConnected &&
             node.matches(":hover")
@@ -995,15 +872,21 @@ const ClipboardItem = ({
             clearTimeout(hoverTimerRef.current);
             hoverTimerRef.current = null;
         }
-        hoverAnchorRef.current = null;
     };
 
-    const hideCompactPreview = async () => {
+    const hideCompactPreviewNow = async () => {
         cancelHoverPreview();
+        cancelPreviewHideTimer();
         await hideCompactPreviewGlobal();
     };
 
-    const showCompactPreview = async (anchor: CompactPreviewAnchor, requestId: number) => {
+    // KwikPaste 的隐藏缓冲：离开卡片先不收起，240ms 内进入新卡片/预览会取消。
+    const scheduleHideCompactPreview = () => {
+        cancelHoverPreview();
+        schedulePreviewHide(() => { void hideCompactPreviewGlobal(); });
+    };
+
+    const showCompactPreview = async (pointerClientX: number, requestId: number) => {
         if (!compactPreviewEnabled) return;
         if (!isHoverPreviewRequestCurrent(requestId)) {
             compactPreviewLog("show preview aborted: stale hover request before start", {
@@ -1012,10 +895,14 @@ const ClipboardItem = ({
             });
             return;
         }
+        const node = itemRef.current;
+        if (!node || !node.isConnected) return;
+        const cardRect = node.getBoundingClientRect();
+        if (cardRect.width <= 0 || cardRect.height <= 0) return;
+
         compactPreviewLog("show preview requested", {
             itemId: item.id,
-            contentType: item.content_type,
-            anchor
+            contentType: item.content_type
         });
         let previewWindow = await ensureCompactPreviewWindow();
         if (!isHoverPreviewRequestCurrent(requestId)) {
@@ -1037,15 +924,6 @@ const ClipboardItem = ({
             });
             return;
         }
-        await ensureCompactPreviewResizeListener();
-        if (!isHoverPreviewRequestCurrent(requestId)) {
-            compactPreviewLog("show preview aborted: stale hover request after resize listener", {
-                itemId: item.id,
-                requestId
-            });
-            return;
-        }
-        compactPreviewLog("preview listeners ready");
         const mounted = await waitForCompactPreviewMounted();
         if (!isHoverPreviewRequestCurrent(requestId)) {
             compactPreviewLog("show preview aborted: stale hover request after mounted wait", {
@@ -1055,9 +933,6 @@ const ClipboardItem = ({
             return;
         }
         compactPreviewLog("mounted state before emit", { mounted });
-        if (!mounted) {
-            compactPreviewLog("mounted wait returned false; continue with fallback timer");
-        }
 
         try {
             const rootStyle = getComputedStyle(document.documentElement);
@@ -1082,12 +957,57 @@ const ClipboardItem = ({
                 });
                 return;
             }
-            compactPreviewPendingShow = true;
-            compactPreviewPendingAnchor = anchor;
+
+            // KwikPaste：面板尺寸在开窗前按内容度量算好（一次性开窗，无 resize 往返）。
+            const monitorInfo = await resolvePreviewMonitor();
+            const listImage = node.querySelector<HTMLImageElement>("img.image-preview");
+            const imageNatural = listImage && listImage.naturalWidth > 0 && listImage.naturalHeight > 0
+                ? { width: listImage.naturalWidth, height: listImage.naturalHeight }
+                : null;
+            const panel = computePreviewPanelSize(
+                {
+                    contentType: item.content_type,
+                    content: item.content,
+                    htmlContent: itemHtml,
+                    imageNatural
+                },
+                {
+                    width: monitorInfo.width - PREVIEW_PANEL.MARGIN * 2,
+                    height: monitorInfo.height - PREVIEW_PANEL.MARGIN * 2
+                }
+            );
+
+            // 卡片矩形（视口 CSS px）→ 屏幕物理 → 显示器局部逻辑坐标。
+            const appWindow = getCurrentWindow();
+            const innerOrigin = await appWindow.innerPosition().catch(() => null);
+            const innerSize = await appWindow.innerSize().catch(() => null);
+            if (!innerOrigin || !innerSize) return;
+            const cardPhysical = cardRectToPhysical(cardRect, innerOrigin, monitorInfo.scaleFactor);
+            const cardLogical: PreviewRect = {
+                left: (cardPhysical.left - monitorInfo.origin.x) / monitorInfo.scaleFactor,
+                top: (cardPhysical.top - monitorInfo.origin.y) / monitorInfo.scaleFactor,
+                width: cardPhysical.width / monitorInfo.scaleFactor,
+                height: cardPhysical.height / monitorInfo.scaleFactor
+            };
+            const windowWidthLogical = innerSize.width / monitorInfo.scaleFactor;
+            const sideLatchKey = String(item.id);
+            const preferLeft = previewSideLatch.get(sideLatchKey)
+                ?? (pointerClientX < windowWidthLogical / 2);
+            previewSideLatch.set(sideLatchKey, preferLeft);
+
+            const available: PreviewRect = {
+                left: PREVIEW_PANEL.MARGIN,
+                top: PREVIEW_PANEL.MARGIN,
+                width: monitorInfo.width - PREVIEW_PANEL.MARGIN * 2,
+                height: monitorInfo.height - PREVIEW_PANEL.MARGIN * 2
+            };
+            const { rect: panelRect } = resolvePreviewPlacement(cardLogical, panel, available, preferLeft);
+
             compactPreviewLog("emit compact-preview-update", {
                 itemId: item.id,
                 contentType: item.content_type,
-                hasHtml: !!itemHtml
+                hasHtml: !!itemHtml,
+                panel
             });
             await previewWindow.emit("compact-preview-update", {
                 contentType: item.content_type,
@@ -1101,78 +1021,32 @@ const ClipboardItem = ({
                 colorMode,
                 richTextSnapshotPreview,
                 clipboardItemFontSize,
-                clipboardTagFontSize
+                clipboardTagFontSize,
+                imageNatural,
+                imageDisplay: panel.imageDisplay
             });
-            compactPreviewLog("emit compact-preview-update done");
-            if (compactPreviewPendingTimer) {
-                clearTimeout(compactPreviewPendingTimer);
-            }
-            compactPreviewPendingTimer = setTimeout(async () => {
-                if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) {
-                    compactPreviewLog("fallback timer canceled: pending state changed");
-                    return;
-                }
-                try {
-                    compactPreviewLog("fallback timer place/show with default size");
-                    await placeAndShowPendingCompactPreview(320, 220, { keepPending: true });
-                } catch (fallbackErr) {
-                    console.error("Failed to show compact preview window (fallback):", fallbackErr);
-                    compactPreviewLog("fallback place/show failed", fallbackErr);
-                }
-            }, 200);
+
+            // 一次性定位开窗：setSize + setPosition + show，之后不再调整。
+            const panelX = monitorInfo.origin.x + Math.round(panelRect.left * monitorInfo.scaleFactor);
+            const panelY = monitorInfo.origin.y + Math.round(panelRect.top * monitorInfo.scaleFactor);
+            previewPanelRectPhysical = {
+                left: panelX,
+                top: panelY,
+                width: Math.round(panelRect.width * monitorInfo.scaleFactor),
+                height: Math.round(panelRect.height * monitorInfo.scaleFactor)
+            };
+            await showPreviewWindowAt(
+                { x: panelX, y: panelY },
+                panelRect.width,
+                panelRect.height
+            );
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             if (message.includes("window not found")) {
-                compactPreviewLog("window not found, recreate flow");
+                compactPreviewLog("window not found, reset for recreate on next hover", err);
                 compactPreviewWindow = null;
                 compactPreviewMounted = false;
                 compactPreviewMountedPromise = null;
-                previewWindow = await ensureCompactPreviewWindow();
-                if (!isHoverPreviewRequestCurrent(requestId)) {
-                    compactPreviewLog("show preview aborted: stale hover request after recreate", {
-                        itemId: item.id,
-                        requestId
-                    });
-                    return;
-                }
-                if (!previewWindow) return;
-                try {
-                    compactPreviewPendingShow = true;
-                    compactPreviewPendingAnchor = anchor;
-                    compactPreviewLog("emit compact-preview-update after recreate");
-                    await previewWindow.emit("compact-preview-update", {
-                        contentType: item.content_type,
-                        content: item.content,
-                        preview: item.preview,
-                        htmlContent: itemHtml,
-                        sourceApp: item.source_app,
-                        timestamp: item.timestamp,
-                        language,
-                        theme,
-                        richTextSnapshotPreview,
-                        colorMode: document.documentElement.classList.contains("dark-mode") ? "dark" : "light"
-                    });
-                    compactPreviewLog("emit compact-preview-update after recreate done");
-                    if (compactPreviewPendingTimer) {
-                        clearTimeout(compactPreviewPendingTimer);
-                    }
-                    compactPreviewPendingTimer = setTimeout(async () => {
-                        if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) {
-                            compactPreviewLog("recreate fallback canceled: pending state changed");
-                            return;
-                        }
-                        try {
-                            compactPreviewLog("recreate fallback place/show with default size");
-                            await placeAndShowPendingCompactPreview(320, 220, { keepPending: true });
-                        } catch (fallbackErr) {
-                            console.error("Failed to show compact preview window (fallback):", fallbackErr);
-                            compactPreviewLog("recreate fallback failed", fallbackErr);
-                        }
-                    }, 200);
-                } catch (retryErr) {
-                    console.error("Failed to show compact preview window:", retryErr);
-                    compactPreviewLog("recreate flow failed", retryErr);
-                }
                 return;
             }
             console.error("Failed to show compact preview window:", err);
@@ -1193,6 +1067,16 @@ const ClipboardItem = ({
         setSnapshotFailed(false);
         setRichImageFallbackFailed(false);
     }, [item.id, itemHtml, richTextSnapshotPreview, compactMode]);
+
+    // Keep the latest sensitive-mask state reachable inside the hover timer callback,
+    // and dismiss an open preview as soon as the item gets masked.
+    const isSensitiveHiddenRef = useRef(isSensitiveHidden);
+    useEffect(() => {
+        isSensitiveHiddenRef.current = isSensitiveHidden;
+        if (isSensitiveHidden) {
+            void hideCompactPreviewNow();
+        }
+    }, [isSensitiveHidden]);
 
     useEffect(() => {
         if (richSnapshotFallbackTimerRef.current) {
@@ -1237,7 +1121,7 @@ const ClipboardItem = ({
 
     useEffect(() => {
         if (!compactPreviewEnabled) {
-            void hideCompactPreview();
+            void hideCompactPreviewNow();
         }
     }, [compactPreviewEnabled]);
 
@@ -1550,7 +1434,7 @@ const ClipboardItem = ({
                 // Without this, the first click activates TieZ and the original input
                 // target loses focus before we dispatch the paste keystroke.
                 e.preventDefault();
-                void hideCompactPreview();
+                void hideCompactPreviewNow();
                 onCopy(false); // Plain text by default
                 onSelect();
             }}
@@ -1578,7 +1462,7 @@ const ClipboardItem = ({
                 if (target.closest('button') || target.closest('input') || target.closest('textarea')) {
                     return;
                 }
-                void hideCompactPreview();
+                void hideCompactPreviewNow();
                 e.preventDefault();
                 // Prevent link navigation on right-click too
                 if (target.closest('a')) {
@@ -1592,15 +1476,12 @@ const ClipboardItem = ({
                 if (!compactPreviewEnabled) return;
                 // Don't show preview if AI options are open to avoid interference
                 if (showAIOptions) return;
+                // KwikPaste 的隐藏缓冲：卡片间移动时取消上一张卡片的收起。
+                cancelPreviewHideTimer();
                 compactPreviewLog("mouseenter schedule preview", { itemId: item.id });
                 const requestId = hoverRequestIdRef.current + 1;
                 hoverRequestIdRef.current = requestId;
-                hoverAnchorRef.current = {
-                    clientX: e.clientX,
-                    clientY: e.clientY,
-                    screenX: e.screenX,
-                    screenY: e.screenY
-                };
+                const pointerX = e.clientX;
                 const target = e.currentTarget;
 
                 // Clear any pending hide timer
@@ -1611,26 +1492,17 @@ const ClipboardItem = ({
                     hoverTimerRef.current = null;
                     // Double-check AI options are still closed before showing
                     if (showAIOptions) return;
+                    // Re-check mask state: it may have changed during the hover delay
+                    if (isSensitiveHiddenRef.current) return;
                     if (!target.isConnected) return;
                     if (!isHoverPreviewRequestCurrent(requestId)) return;
-                    const anchor = hoverAnchorRef.current;
-                    if (!anchor) return;
                     compactPreviewLog("mouseenter timer fired, show preview", { itemId: item.id });
-                    void showCompactPreview(anchor, requestId);
-                }, 1000); // 1s delay
-            }}
-            onMouseMove={(e) => {
-                if (!compactPreviewEnabled) return;
-                hoverAnchorRef.current = {
-                    clientX: e.clientX,
-                    clientY: e.clientY,
-                    screenX: e.screenX,
-                    screenY: e.screenY
-                };
+                    void showCompactPreview(pointerX, requestId);
+                }, 400); // 0.4s delay: snappy like KwikPaste, still avoids drive-by hovers
             }}
             onMouseLeave={() => {
-                compactPreviewLog("mouseleave hide preview", { itemId: item.id });
-                void hideCompactPreview();
+                compactPreviewLog("mouseleave schedule hide preview", { itemId: item.id });
+                scheduleHideCompactPreview();
             }}
         >
             <div className="item-meta">
@@ -1700,7 +1572,7 @@ const ClipboardItem = ({
                                     if (!isAIProcessing) {
                                         // Close preview window when opening AI options
                                         if (!showAIOptions) {
-                                            hideCompactPreview();
+                                            hideCompactPreviewNow();
                                         }
                                         setLocalAiOptionsOpen(prev => !prev);
                                         onAIOptionsToggle?.();

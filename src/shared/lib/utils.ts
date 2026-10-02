@@ -117,3 +117,24 @@ export const formatSensitivePreview = (
 
   return maskMiddleChars(content, opts.prefixVisible, opts.suffixVisible);
 };
+
+const BYTES_PER_UNIT = 1024;
+
+/**
+ * Format a byte count the way clipboard previews usually show it:
+ * `923 KB`, `1.5 MB`, `2 GB`. Values under 1 KB stay in bytes.
+ */
+export const formatFileSize = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < BYTES_PER_UNIT) return `${bytes} B`;
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / BYTES_PER_UNIT;
+  let unitIndex = 0;
+  while (value >= BYTES_PER_UNIT && unitIndex < units.length - 1) {
+    value /= BYTES_PER_UNIT;
+    unitIndex += 1;
+  }
+  const rounded = unitIndex === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded} ${units[unitIndex]}`;
+};
