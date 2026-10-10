@@ -125,7 +125,6 @@ const buildQuickPasteHintsById = (
 };
 
 const App = () => {
-  type FileTransferSourceView = "clipboard" | "tag_manager" | "emoji_panel";
 
   const appState = useAppState();
   const {
@@ -291,21 +290,22 @@ const App = () => {
     setCloudSyncWebdavPassword,
     setCloudSyncWebdavBasePath,
     setCloudSyncContentPrefs,
-    fileServerEnabled,
     setFileServerEnabled,
     setFileServerPort,
-    localIp,
+    localIp: _localIp,
     setLocalIp,
     setAvailableIps,
-    actualPort,
+    actualPort: _actualPort,
     setActualPort,
     setFileTransferPath,
     setFileTransferAutoOpen,
     setFileTransferAutoCopy,
     setFileServerAutoClose,
+    setFileServerAutoCloseSeconds,
     fileTransferAutoOpen,
     fileTransferAutoCopy,
     fileServerAutoClose,
+    fileServerAutoCloseSeconds,
     soundEnabled,
     setSoundEnabled,
     pasteSoundEnabled,
@@ -346,8 +346,6 @@ const App = () => {
 
   const effectiveShowEmojiPanel = showEmojiPanel && emojiPanelEnabled;
   const effectiveShowTagManager = showTagManager && tagManagerEnabled;
-  const [fileTransferSourceView, setFileTransferSourceView] =
-    useState<FileTransferSourceView>("clipboard");
 
   const debouncedSearch = useDebounce(search, 400);
   const searchInputRef = useInputFocus<HTMLInputElement>();
@@ -390,39 +388,7 @@ const App = () => {
 
   const showScrollTopVisible = showScrollTop && scrollTopButtonEnabled;
 
-  const getCurrentSourceView = useCallback((): FileTransferSourceView => {
-    if (effectiveShowTagManager) return "tag_manager";
-    if (effectiveShowEmojiPanel) return "emoji_panel";
-    return "clipboard";
-  }, [effectiveShowEmojiPanel, effectiveShowTagManager]);
-
-  const restoreViewAfterChat = useCallback(
-    (sourceView: FileTransferSourceView) => {
-      setShowTagManager(sourceView === "tag_manager");
-      setShowEmojiPanel(sourceView === "emoji_panel");
-    },
-    [setShowEmojiPanel, setShowTagManager]
-  );
-
-  const openFileTransfer = useCallback(() => {
-    const sourceView = getCurrentSourceView();
-    setFileTransferSourceView(sourceView);
-    setShowTagManager(false);
-    setShowEmojiPanel(false);
-    setShowRecycleBin(false);
-    setChatMode(true);
-  }, [getCurrentSourceView, setChatMode, setShowEmojiPanel, setShowRecycleBin, setShowTagManager]);
-
-  const closeFileTransfer = useCallback(() => {
-    setChatMode(false);
-    restoreViewAfterChat(fileTransferSourceView);
-  }, [fileTransferSourceView, restoreViewAfterChat, setChatMode]);
-
   const handleHeaderBack = useCallback(() => {
-    if (chatMode) {
-      closeFileTransfer();
-      return;
-    }
     if (showRecycleBin) {
       setShowRecycleBin(false);
       return;
@@ -435,8 +401,6 @@ const App = () => {
       setShowTagManager(false);
     }
   }, [
-    chatMode,
-    closeFileTransfer,
     effectiveShowEmojiPanel,
     effectiveShowTagManager,
     setShowEmojiPanel,
@@ -444,14 +408,6 @@ const App = () => {
     setShowTagManager,
     showRecycleBin
   ]);
-
-  const handleToggleHeaderChat = useCallback(() => {
-    if (chatMode) {
-      closeFileTransfer();
-      return;
-    }
-    openFileTransfer();
-  }, [chatMode, closeFileTransfer, openFileTransfer]);
 
   const handleListScroll = useCallback((offset: number) => {
     handleSearchScroll(offset);
@@ -612,6 +568,7 @@ const App = () => {
     setCloudSyncWebdavBasePath,
     setCloudSyncContentPrefs,
     setFileServerAutoClose,
+    setFileServerAutoCloseSeconds,
     setFileTransferAutoOpen,
     setFileTransferAutoCopy,
     setFileServerPort,
@@ -678,17 +635,6 @@ const App = () => {
       setShowTagManager(false);
     }
   }, [tagManagerEnabled, showTagManager, setShowTagManager]);
-
-  // The standalone settings window asks the main window to open file-transfer chat.
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    const unlisten = listen("open-file-transfer", () => {
-      openFileTransfer();
-    });
-    return () => {
-      unlisten.then((off) => off());
-    };
-  }, [openFileTransfer]);
 
   // Tray menu / tray click actions ask the app to open the settings window.
   useEffect(() => {
@@ -860,6 +806,7 @@ const App = () => {
     captureRichText,
     fileTransferAutoCopy,
     fileServerAutoClose,
+    fileServerAutoCloseSeconds,
     fileTransferAutoOpen,
     persistent,
     arrowKeySelection,
@@ -870,7 +817,7 @@ const App = () => {
 
   useNavigationSync({ showSettings, showTagManager: effectiveShowTagManager, chatMode, showEmojiPanel: effectiveShowEmojiPanel });
 
-  const { copyToClipboard, openContent, deleteEntry, togglePin, handleUpdateTags } =
+  const { copyToClipboard, openContent, revealFileLocation, deleteEntry, togglePin, handleUpdateTags } =
     useClipboardActions({
       t,
       pushToast,
@@ -983,6 +930,7 @@ const App = () => {
     setSelectedIndex,
     setRevealedIds,
     openContent,
+    revealFileLocation,
     togglePin,
     deleteEntry,
     setEditingTagsId,
@@ -1004,8 +952,6 @@ const App = () => {
         showEmojiPanel={effectiveShowEmojiPanel}
         setShowEmojiPanel={setShowEmojiPanel}
         emojiPanelEnabled={emojiPanelEnabled}
-        chatMode={chatMode}
-        fileServerEnabled={fileServerEnabled}
         showRecycleBin={showRecycleBin}
         setShowRecycleBin={setShowRecycleBin}
         isWindowPinned={isWindowPinned}
@@ -1028,8 +974,8 @@ const App = () => {
         typeFilter={typeFilter}
         setTypeFilter={setTypeFilter}
         onBack={handleHeaderBack}
-        onToggleChat={handleToggleHeaderChat}
         onOpenSettings={openSettingsWindow}
+        onOpenChat={() => openSettingsWindow({ chat: true })}
       />
 
       <AnnouncementSystem
@@ -1038,7 +984,7 @@ const App = () => {
       />
 
       <main
-        className={`main-content${chatMode ? " file-transfer-mode" : ""}${effectiveShowTagManager ? " tag-manager-mode" : ""}`}
+        className={`main-content${effectiveShowTagManager ? " tag-manager-mode" : ""}`}
         style={{ 
           overflowY: (showSettings || effectiveShowTagManager) ? 'auto' : 'hidden',
           padding: effectiveShowTagManager ? '0' : undefined
@@ -1055,9 +1001,6 @@ const App = () => {
           recycleBinRetentionDays={recycleBinRetentionDays}
           onCloseRecycleBin={() => setShowRecycleBin(false)}
           tagColors={tagColors}
-          chatMode={chatMode}
-          localIp={localIp}
-          actualPort={actualPort}
           emojiFavorites={emojiFavorites}
           setEmojiFavorites={setEmojiFavorites}
           emojiPanelTab={emojiPanelTab}

@@ -1,7 +1,7 @@
 import { useRef, useEffect, useLayoutEffect, useState, useMemo, memo } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { cursorPosition, getCurrentWindow, LogicalSize, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
+import { cursorPosition, getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
     Pin,
@@ -27,6 +27,7 @@ import {
     Files,
     ImageOff,
     FileQuestion,
+    FolderOpen,
     GripVertical
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -35,7 +36,8 @@ import {
     formatSensitivePreview,
     getConciseTime,
     getTagColor,
-    getTagTextColor
+    getTagTextColor,
+    resolveEntryFilePath
 } from "../../../shared/lib/utils";
 import HtmlContent from "../../../shared/components/HtmlContent";
 import { toTauriLocalImageSrc } from "../../../shared/lib/localImageSrc";
@@ -47,7 +49,10 @@ import {
     PREVIEW_PANEL,
     computePreviewPanelSize,
     resolvePreviewMonitor,
+    resolvePreviewFont,
     cardRectToPhysical,
+    computePreviewSideRooms,
+    resolvePreviewSide,
     resolvePreviewPlacement,
     type PreviewRect
 } from "../lib/previewPanelSize";
@@ -59,7 +64,7 @@ const TABULAR_RICH_HTML_RE = /<(table|tr|td|th|thead|tbody|tfoot|colgroup|col)\b
 const SPREADSHEET_SOURCE_RE = /\b(excel|et|wps|sheet|spreadsheet|calc)\b/i;
 const SPREADSHEET_APP_RE = /(?:^|[\\/])(excel|et|wps|wpssheet|soffice)(?:\.exe|\.app)?$/i;
 const STANDALONE_COLOR_RE = /^(#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|(?:rgb|hsl)a?\(\s*[^)]+\s*\))$/i;
-const COMPACT_PREVIEW_DEBUG = false;
+const COMPACT_PREVIEW_DEBUG = true;
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     (/Mac|iPhone|iPad|iPod/i.test(navigator.userAgent) || /Mac/i.test(navigator.platform));
@@ -68,7 +73,12 @@ const COMPACT_PREVIEW_WARMUP_SUPPORTED = !IS_MACOS;
 const compactPreviewLog = (...args: unknown[]) => {
     if (!COMPACT_PREVIEW_DEBUG) return;
     const ts = new Date().toISOString();
+    const line = args
+        .map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a)))
+        .join(" ");
     console.log(`[CompactPreview][Main][${ts}]`, ...args);
+    // 发布版没有 devtools，写进 tiez.log 以便远程诊断预览尺寸问题。
+    invoke("append_debug_log", { line: `[preview-main] ${line}` }).catch(() => { });
 };
 const richPreviewFailureLog = (stage: string, detail?: Record<string, unknown>) => {
     console.warn("[RichTextPreview][MainList]", stage, detail || {});
@@ -191,11 +201,14 @@ const schedulePreviewHide = (hide: () => void) => {
 /**
  * KwikPaste 式一次性开窗：尺寸与位置在显示前就算好，setSize → setPosition → show
  * 一气呵成。窗口显示后不再有任何 resize 往返，所以面板不会跳、不会闪。
+ * 注意尺寸必须用物理像素：预览窗口隐藏时可能停在另一块 DPI 不同的显示器上，
+ * LogicalSize 会按“当前所在”显示器的缩放换算，导致面板物理尺寸算错
+ * （高分屏上面板变小、内容放不下——长文预览偏小、单行预览被挤空的根源）。
  */
 const showPreviewWindowAt = async (
     bounds: { x: number; y: number },
-    widthLogical: number,
-    heightLogical: number
+    widthPhysical: number,
+    heightPhysical: number
 ) => {
     const previewWindow = compactPreviewWindow;
     if (!previewWindow) return;
@@ -204,7 +217,7 @@ const showPreviewWindowAt = async (
     try {
         // 面板接受鼠标（可悬停、可滚动）；每次显示前再确保一次。
         await previewWindow.setIgnoreCursorEvents(false).catch(() => { });
-        await previewWindow.setSize(new LogicalSize(widthLogical, heightLogical));
+        await previewWindow.setSize(new PhysicalSize(Math.max(1, Math.round(widthPhysical)), Math.max(1, Math.round(heightPhysical))));
         await previewWindow.setPosition(new PhysicalPosition(bounds.x, bounds.y));
         await previewWindow.show();
         // Force top-most z-order refresh so preview is not occluded by the main top-most window.
@@ -217,7 +230,7 @@ const showPreviewWindowAt = async (
                 compactPreviewLog("refresh always-on-top stacking failed", stackErr);
             }
         }
-        compactPreviewLog("preview window shown", { bounds, widthLogical, heightLogical });
+        compactPreviewLog("preview window shown", { bounds, widthPhysical, heightPhysical });
     } catch (err) {
         setIgnoreBlurSafe(false);
         compactPreviewLog("preview show failed", err);
@@ -568,6 +581,7 @@ const ClipboardItem = ({
     onCopy,
     onToggleReveal,
     onOpen,
+    onRevealLocation,
     onTogglePin,
     onDelete,
     onToggleTagEditor,
@@ -607,6 +621,11 @@ const ClipboardItem = ({
         [item.content, item.content_type]
     );
     const singleFilePath = filePaths.length === 1 ? filePaths[0] : null;
+    // 定位入口按内容真值判：任何类型只要内容是个绝对本地路径就能定位，多文件取第一个。
+    const revealFilePath = useMemo(
+        () => (item.file_preview_exists === false ? null : resolveEntryFilePath(item.content)),
+        [item.content, item.file_preview_exists]
+    );
     const [fileIcon, setFileIcon] = useState<string | null>(() => peekFileIcon(singleFilePath) ?? null);
     const isComposing = useRef(false);
     const richSnapshotImgRef = useRef<HTMLImageElement | null>(null);
@@ -964,36 +983,28 @@ const ClipboardItem = ({
             const imageNatural = listImage && listImage.naturalWidth > 0 && listImage.naturalHeight > 0
                 ? { width: listImage.naturalWidth, height: listImage.naturalHeight }
                 : null;
-            const panel = computePreviewPanelSize(
-                {
-                    contentType: item.content_type,
-                    content: item.content,
-                    htmlContent: itemHtml,
-                    imageNatural
-                },
-                {
-                    width: monitorInfo.width - PREVIEW_PANEL.MARGIN * 2,
-                    height: monitorInfo.height - PREVIEW_PANEL.MARGIN * 2
-                }
-            );
+            const previewFont = await resolvePreviewFont();
 
-            // 卡片矩形（视口 CSS px）→ 屏幕物理 → 显示器局部逻辑坐标。
+            // 卡片与主窗口矩形（视口 CSS px）→ 屏幕物理 → 显示器局部逻辑坐标。
             const appWindow = getCurrentWindow();
             const innerOrigin = await appWindow.innerPosition().catch(() => null);
             const innerSize = await appWindow.innerSize().catch(() => null);
             if (!innerOrigin || !innerSize) return;
-            const cardPhysical = cardRectToPhysical(cardRect, innerOrigin, monitorInfo.scaleFactor);
-            const cardLogical: PreviewRect = {
-                left: (cardPhysical.left - monitorInfo.origin.x) / monitorInfo.scaleFactor,
-                top: (cardPhysical.top - monitorInfo.origin.y) / monitorInfo.scaleFactor,
-                width: cardPhysical.width / monitorInfo.scaleFactor,
-                height: cardPhysical.height / monitorInfo.scaleFactor
-            };
-            const windowWidthLogical = innerSize.width / monitorInfo.scaleFactor;
-            const sideLatchKey = String(item.id);
-            const preferLeft = previewSideLatch.get(sideLatchKey)
-                ?? (pointerClientX < windowWidthLogical / 2);
-            previewSideLatch.set(sideLatchKey, preferLeft);
+            const toLogical = (physical: {
+                left: number; top: number; width: number; height: number;
+            }): PreviewRect => ({
+                left: (physical.left - monitorInfo.origin.x) / monitorInfo.scaleFactor,
+                top: (physical.top - monitorInfo.origin.y) / monitorInfo.scaleFactor,
+                width: physical.width / monitorInfo.scaleFactor,
+                height: physical.height / monitorInfo.scaleFactor
+            });
+            const cardLogical = toLogical(cardRectToPhysical(cardRect, innerOrigin, monitorInfo.scaleFactor));
+            const windowLogical = toLogical({
+                left: innerOrigin.x,
+                top: innerOrigin.y,
+                width: innerSize.width,
+                height: innerSize.height
+            });
 
             const available: PreviewRect = {
                 left: PREVIEW_PANEL.MARGIN,
@@ -1001,13 +1012,55 @@ const ClipboardItem = ({
                 width: monitorInfo.width - PREVIEW_PANEL.MARGIN * 2,
                 height: monitorInfo.height - PREVIEW_PANEL.MARGIN * 2
             };
-            const { rect: panelRect } = resolvePreviewPlacement(cardLogical, panel, available, preferLeft);
+
+            // 先定侧再量尺寸：指针在卡片左半偏好左侧（KwikPaste 的方向锁），
+            // 该侧空隙作为宽度上限去量面板，面板天然放得下、绝不盖住主窗口。
+            const windowWidthLogical = innerSize.width / monitorInfo.scaleFactor;
+            const sideLatchKey = String(item.id);
+            const preferLeft = previewSideLatch.get(sideLatchKey)
+                ?? (pointerClientX < windowWidthLogical / 2);
+            previewSideLatch.set(sideLatchKey, preferLeft);
+            const sideRooms = computePreviewSideRooms(windowLogical, available);
+            const side = resolvePreviewSide(sideRooms, preferLeft, PREVIEW_PANEL.MIN_WIDTH);
+            const panel = await computePreviewPanelSize(
+                {
+                    contentType: item.content_type,
+                    content: item.content,
+                    htmlContent: itemHtml,
+                    imageNatural,
+                    sourceApp: item.source_app,
+                    font: previewFont
+                },
+                {
+                    width: Math.min(available.width,
+                        Math.max(PREVIEW_PANEL.MIN_WIDTH, sideRooms[side])),
+                    height: available.height
+                }
+            );
+            // 面板度量（含富文本图片等待）有耗时，显示前再校验一次悬停请求是否仍有效。
+            if (!isHoverPreviewRequestCurrent(requestId)) {
+                compactPreviewLog("show preview aborted: stale hover request after size measure", {
+                    itemId: item.id,
+                    requestId
+                });
+                return;
+            }
+
+            const { rect: panelRect } = resolvePreviewPlacement(
+                cardLogical, windowLogical, panel, available, side
+            );
 
             compactPreviewLog("emit compact-preview-update", {
                 itemId: item.id,
                 contentType: item.content_type,
                 hasHtml: !!itemHtml,
-                panel
+                contentLen: (item.content || "").length,
+                monitor: monitorInfo,
+                windowRect: windowLogical,
+                sideRooms,
+                side,
+                panel,
+                panelRect
             });
             await previewWindow.emit("compact-preview-update", {
                 contentType: item.content_type,
@@ -1023,22 +1076,27 @@ const ClipboardItem = ({
                 clipboardItemFontSize,
                 clipboardTagFontSize,
                 imageNatural,
-                imageDisplay: panel.imageDisplay
+                imageDisplay: panel.imageDisplay,
+                panelLogicalWidth: panel.width,
+                previewFontSize: previewFont.size,
+                previewFontFamily: previewFont.family
             });
 
             // 一次性定位开窗：setSize + setPosition + show，之后不再调整。
             const panelX = monitorInfo.origin.x + Math.round(panelRect.left * monitorInfo.scaleFactor);
             const panelY = monitorInfo.origin.y + Math.round(panelRect.top * monitorInfo.scaleFactor);
+            const panelWPhysical = Math.round(panelRect.width * monitorInfo.scaleFactor);
+            const panelHPhysical = Math.round(panelRect.height * monitorInfo.scaleFactor);
             previewPanelRectPhysical = {
                 left: panelX,
                 top: panelY,
-                width: Math.round(panelRect.width * monitorInfo.scaleFactor),
-                height: Math.round(panelRect.height * monitorInfo.scaleFactor)
+                width: panelWPhysical,
+                height: panelHPhysical
             };
             await showPreviewWindowAt(
                 { x: panelX, y: panelY },
-                panelRect.width,
-                panelRect.height
+                panelWPhysical,
+                panelHPhysical
             );
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -1550,6 +1608,15 @@ const ClipboardItem = ({
                         >
                             <ExternalLink size={12} />
                         </button>
+                        {revealFilePath && onRevealLocation && (
+                            <button
+                                className="btn-icon"
+                                onClick={onRevealLocation}
+                                title={t('open_file_location')}
+                            >
+                                <FolderOpen size={12} />
+                            </button>
+                        )}
                         <button
                             className={`btn-icon ${item.is_pinned ? "active" : ""}`}
                             onClick={onTogglePin}

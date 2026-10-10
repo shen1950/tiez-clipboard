@@ -119,7 +119,11 @@ impl PipelineStage for DiscoveryStage {
                         || lower.ends_with(".webp")
                     {
                         if let Ok(img_data) = std::fs::read(path) {
-                            if let Ok(img) = image::load_from_memory(&img_data) {
+                            // 动图 WebP 保留原文件路径（与 .gif 同一策略）：
+                            // 解码重编码会把多帧容器压成第一帧的静图 PNG。
+                            if animated_image_format(&img_data) == Some("webp") {
+                                ("image".to_string(), path.clone(), None)
+                            } else if let Ok(img) = image::load_from_memory(&img_data) {
                                 let mut bytes: Vec<u8> = Vec::new();
                                 let mut cursor = std::io::Cursor::new(&mut bytes);
                                 if img.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
@@ -462,7 +466,11 @@ impl PipelineStage for ValidationStage {
                 let session = session_history.0.lock().unwrap();
                 let entry = ctx.entry.as_ref().expect("entry exists");
                 let normalized_content = entry.content.trim().replace("\r\n", "\n");
-                let entry_image_hash = if entry.content_type == "image" {
+                // 动图只用内容精确匹配去重：第一帧哈希会和它的静图缩略撞上，
+                // 与 clipboard_repo::find_by_content_with_conn 保持同一判据。
+                let entry_image_hash = if entry.content_type == "image"
+                    && animated_image_format_of_content(&entry.content).is_none()
+                {
                     calc_image_hash(&entry.content)
                 } else {
                     None

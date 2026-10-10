@@ -138,3 +138,16 @@ export const formatFileSize = (bytes: number): string => {
   const rounded = unitIndex === 0 ? Math.round(value) : Math.round(value * 10) / 10;
   return `${rounded} ${units[unitIndex]}`;
 };
+
+/**
+ * 条目有没有可定位的本地文件：只看内容本身是不是绝对路径，不看 content_type。
+ * 图片/视频/文件条目都是路径；文本、代码里存的路径同样能定位；url 与富文本没有落盘位置。
+ * 多文件条目取第一个（它们通常在同一目录里）。
+ */
+export const resolveEntryFilePath = (content?: string): string | null => {
+  const first = (content || "").trim().split(/\r?\n/)[0]?.trim() ?? "";
+  if (!first || /^data:/i.test(first) || /^https?:/i.test(first)) return null;
+  const is_drive_path = /^[a-zA-Z]:[\\/]/.test(first);
+  const is_unc_path = /^\\\\[^\\]+\\/.test(first);
+  return is_drive_path || is_unc_path ? first : null;
+};

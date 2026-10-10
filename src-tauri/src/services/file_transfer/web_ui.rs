@@ -51,19 +51,19 @@ fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'s
             --send-button-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
             "#,
             r#"
-            body.theme-sticky-note {{
+            body.theme-sticky-note {
                 background-color: var(--bg-body);
                 background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(255, 243, 188, 0.22));
                 background-size: 100% 100%;
-            }}
-            body.theme-sticky-note.dark-mode {{
+            }
+            body.theme-sticky-note.dark-mode {
                 background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.22));
-            }}
-            @media (prefers-color-scheme: dark) {{
-                body.theme-sticky-note:not(.light-mode) {{
+            }
+            @media (prefers-color-scheme: dark) {
+                body.theme-sticky-note:not(.light-mode) {
                     background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.22));
-                }}
-            }}
+                }
+            }
             .theme-sticky-note .avatar,
             .theme-sticky-note .bubble,
             .theme-sticky-note .text-input,
@@ -128,11 +128,11 @@ fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'s
             --send-button-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
             "#,
             r#"
-            body.theme-paper {{
+            body.theme-paper {
                 background-image: linear-gradient(rgba(139, 90, 43, 0.06) 1px, transparent 1px);
                 background-size: 100% 1.65em;
-            }}
-            body.theme-paper::before {{
+            }
+            body.theme-paper::before {
                 content: "";
                 position: fixed;
                 inset: 0;
@@ -140,12 +140,12 @@ fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'s
                 opacity: 0.04;
                 pointer-events: none;
                 z-index: 9999;
-            }}
-            @media (prefers-color-scheme: dark) {{
-                body.theme-paper:not(.light-mode) {{
+            }
+            @media (prefers-color-scheme: dark) {
+                body.theme-paper:not(.light-mode) {
                     background-image: linear-gradient(rgba(213, 196, 161, 0.04) 1px, transparent 1px);
-                }}
-            }}
+                }
+            }
             "#,
         ),
         "mica" => (
@@ -181,20 +181,20 @@ fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'s
             --send-button-color: #ffffff;
             "#,
             r#"
-            .theme-mica header, .theme-mica footer {{
+            .theme-mica header, .theme-mica footer {
                 backdrop-filter: blur(20px) saturate(180%);
                 -webkit-backdrop-filter: blur(20px) saturate(180%);
-            }}
-            .theme-mica .message.received .bubble {{
+            }
+            .theme-mica .message.received .bubble {
                 backdrop-filter: blur(10px);
                 -webkit-backdrop-filter: blur(10px);
-            }}
-            .theme-mica .retro-btn.send-btn {{
+            }
+            .theme-mica .retro-btn.send-btn {
                 background: var(--send-button-background);
                 color: var(--send-button-color);
                 border: none;
                 box-shadow: 0 4px 12px rgba(79, 125, 255, 0.3);
-            }}
+            }
             "#,
         ),
         "acrylic" => (
@@ -228,20 +228,20 @@ fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'s
             --send-button-color: #ffffff;
             "#,
             r#"
-            .theme-acrylic header, .theme-acrylic footer {{
+            .theme-acrylic header, .theme-acrylic footer {
                 backdrop-filter: blur(30px) saturate(145%);
                 -webkit-backdrop-filter: blur(30px) saturate(145%);
-            }}
-            .theme-acrylic .message.received .bubble {{
+            }
+            .theme-acrylic .message.received .bubble {
                 backdrop-filter: blur(15px);
                 -webkit-backdrop-filter: blur(15px);
-            }}
-            .theme-acrylic .retro-btn.send-btn {{
+            }
+            .theme-acrylic .retro-btn.send-btn {
                 background: var(--send-button-background);
                 color: var(--send-button-color);
                 border: none;
                 box-shadow: 0 4px 12px rgba(79, 125, 255, 0.3);
-            }}
+            }
             "#,
         ),
         _ => (
@@ -328,7 +328,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>TieZ-GuLing 终端传输</title>
     <style>
         * {{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
@@ -385,6 +385,15 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             }}
         }}
 
+        /* 安卓 Chrome 的 font boosting 会按“显示大小”把文本块随机放大，
+           固定高度的容器直接被裁掉。关掉 boosting，改由下面的 em 跟随
+           系统“字体大小”缩放：既不裁字，大字体下也真的能看大。 */
+        html {{
+            -webkit-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+            font-size: 100%;
+        }}
+
         html, body {{
             height: 100%;
             width: 100%;
@@ -407,11 +416,14 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         }}
 
         header {{
-            height: 60px;
+            min-height: 60px;
+            height: auto;
             background: var(--bg-panel);
             border-bottom: 2px solid var(--border-dark);
             display: flex; align-items: center; justify-content: center;
-            padding: 0 16px; position: relative;
+            /* 上下内边距必须和下面这条 padding 一起写：分成两条声明时，
+               后写的 padding: 0 16px 会把 6px 的上下内边距整个覆盖掉。 */
+            padding: 6px 16px; position: relative;
             flex-shrink: 0;
             z-index: 10;
         }}
@@ -423,11 +435,11 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             .theme-mica header, .theme-acrylic header {{ background: rgba(30,30,30,0.7); }}
         }}
 
-        h1 {{ font-size: 18px; font-weight: 900; margin: 0; letter-spacing: -0.5px; }}
+        h1 {{ font-size: 1.125em; font-weight: 900; margin: 0; letter-spacing: -0.5px; }}
         
         .header-status {{
             position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
-            display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: bold;
+            display: flex; align-items: center; gap: 6px; font-size: 0.75em; font-weight: bold;
         }}
         .status-dot {{ width: 8px; height: 8px; background: #4caf50; border-radius: 50%; box-shadow: 0 0 5px #4caf50; }}
 
@@ -439,7 +451,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         }}
 
         .timestamp {{
-            font-size: 11px; text-align: center; opacity: 0.6;
+            font-size: 0.6875em; text-align: center; opacity: 0.6;
             margin: 8px 0; font-weight: bold;
         }}
 
@@ -466,7 +478,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             background: #fff;
             border: 2px solid var(--border-dark);
             box-shadow: 3px 3px 0 var(--shadow-color);
-            font-size: 14px; line-height: 1.5;
+            font-size: 0.875em; line-height: 1.5;
             word-break: break-all;
             position: relative;
             border-radius: var(--radius);
@@ -531,8 +543,8 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         .file-card {{ display: flex; align-items: center; gap: 12px; }}
         .file-icon {{ font-size: 24px; flex-shrink: 0; }}
         .file-info {{ display: flex; flex-direction: column; min-width: 0; overflow: hidden; }}
-        .file-name {{ font-weight: 700; font-family: var(--font-mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }}
-        .file-size {{ font-size: 11px; font-family: var(--font-mono); opacity: 0.8; margin-top: 2px; }}
+        .file-name {{ font-weight: 700; font-family: var(--font-mono); font-size: 0.8125em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }}
+        .file-size {{ font-size: 0.6875em; font-family: var(--font-mono); opacity: 0.8; margin-top: 2px; }}
 
         /* Image Preview */
         .img-preview {{
@@ -560,6 +572,16 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         .progress-bar {{ width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px; overflow: hidden; margin-top: 4px; }}
         .progress-inner {{ height: 100%; background: var(--accent-color); width: 0%; transition: width 0.2s; }}
 
+        /* 页内提示：安卓上 alert 会被文件选择器的返回动画吞掉，
+           而且用户看不到"为什么没反应"，这里给一个不打断操作的浮层。 */
+        #status-toast {{
+            position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%);
+            max-width: 86%; padding: 8px 12px;
+            background: rgba(0,0,0,0.82); color: #fff;
+            font-size: 0.8125em; line-height: 1.4; text-align: center;
+            border-radius: 6px; display: none; z-index: 10000; word-break: break-all;
+        }}
+
         footer {{
             padding: 10px 16px;
             padding-bottom: calc(10px + env(safe-area-inset-bottom));
@@ -584,7 +606,9 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             display: flex; align-items: center; justify-content: center;
             cursor: pointer; color: var(--text-primary);
             transition: all 0.1s;
-            height: 40px;
+            min-height: 40px;
+            height: auto;
+            padding: 6px 10px;
             flex-shrink: 0;
             border-radius: var(--button-radius, var(--radius));
         }}
@@ -604,7 +628,8 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         .add-btn {{ width: 40px; font-size: 24px; font-weight: 900; }}
         .send-btn {{
             min-width: 72px;
-            padding: 0 16px;
+            min-height: 40px;
+            padding: 6px 16px;
             background: var(--send-button-background, var(--accent-color));
             color: var(--send-button-color, #ffffff);
             border: var(--send-button-border, var(--button-border, 2px solid var(--border-dark)));
@@ -612,13 +637,16 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         }}
         
         .text-input {{ 
-            flex: 1; height: 40px; min-height: 40px; max-height: 100px; padding: 10px 12px;
+            /* min-width 必须显式归零：textarea 的固有宽度（默认 cols=20）会让它
+               拒绝收缩，系统字体一大就把右边的 SEND 按钮整个挤出屏幕。 */
+            flex: 1 1 auto; min-width: 0;
+            height: auto; min-height: 40px; max-height: 120px; padding: 10px 12px;
             background: var(--bg-input); border: var(--input-border, 2px solid var(--border-dark));
             box-shadow: var(--input-shadow, inset 2px 2px 0 rgba(0,0,0,0.1));
-            font-size: 14px; font-family: var(--content-font-family, var(--font-mono));
+            font-size: 0.875em; font-family: var(--content-font-family, var(--font-mono));
             color: var(--text-primary); outline: none;
             border-radius: var(--input-radius, var(--radius)); -webkit-appearance: none;
-            resize: none; overflow-y: auto; line-height: 20px;
+            resize: none; overflow-y: auto; line-height: 1.45;
         }}
         .theme-mica .text-input, .theme-acrylic .text-input {{ box-shadow: none; border-width: 1px; }}
         @media (prefers-color-scheme: dark) {{
@@ -679,7 +707,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
 
         #fs-textarea {{
             flex: 1; width: 100%; border: 2px solid var(--border-dark);
-            padding: 16px; font-size: 16px; font-family: var(--font-mono);
+            padding: 16px; font-size: 1em; font-family: var(--font-mono);
             background: #fff; color: var(--text-primary); margin-bottom: 16px;
             border-radius: var(--radius); resize: none; outline: none;
         }}
@@ -728,14 +756,16 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
     </div>
 
     <footer>
-        <label for="file-input" class="retro-btn add-btn">+</label>
-        <div style="position:relative; flex:1; display:flex;">
+        <button class="retro-btn add-btn" id="add-btn" type="button">+</button>
+        <div style="position:relative; flex:1 1 auto; min-width:0; display:flex;">
             <textarea class="text-input" id="text-input" placeholder="输入文字..." rows="1"></textarea>
             <div class="expand-btn" id="expand-btn" onclick="openFullscreen()">⤢</div>
         </div>
         <button class="retro-btn send-btn" id="send-btn">SEND</button>
         <input type="file" id="file-input" multiple style="display:none">
     </footer>
+
+    <div id="status-toast"></div>
 
     <!-- Fullscreen Image Overlay -->
     <div id="img-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); backdrop-filter:blur(5px); z-index:9999; align-items:center; justify-content:center; flex-direction:column;">
@@ -747,7 +777,29 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         const fileInput = document.getElementById('file-input');
         const textInput = document.getElementById('text-input');
         const sendBtn = document.getElementById('send-btn');
+        const addBtn = document.getElementById('add-btn');
         const chatBox = document.getElementById('chat-box');
+
+        let toastTimer = null;
+        function showStatus(msg) {{
+            const el = document.getElementById('status-toast');
+            el.textContent = msg;
+            el.style.display = 'block';
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {{ el.style.display = 'none'; }}, 4000);
+        }}
+
+        // 用 JS 主动开选择器，不用 <label for="file-input">：
+        // label 转发点击 + 隐藏 input 自身冒泡回来的 click 在部分安卓
+        // （MIUI 文件管理器）上会连着弹两次——第一次选完像是“没反应”，
+        // 紧接着又弹出选择器要求重选，正是用户反馈的现象。
+        let pickerOpening = false;
+        addBtn.onclick = () => {{
+            if (pickerOpening) return;
+            pickerOpening = true;
+            setTimeout(() => {{ pickerOpening = false; }}, 1000);
+            fileInput.click();
+        }};
         
         const now = new Date();
         document.getElementById('time-now').innerText = `${{now.getHours().toString().padStart(2,'0')}}:${{now.getMinutes().toString().padStart(2,'0')}}`;
@@ -917,9 +969,9 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
 
         // Adjust textarea height
         textInput.addEventListener('input', function() {{
-            this.style.height = '40px';
-            const newHeight = Math.min(this.scrollHeight, 100);
-            this.style.height = newHeight + 'px';
+            this.style.height = 'auto';
+            const newHeight = Math.min(this.scrollHeight, 120);
+            this.style.height = Math.max(40, newHeight) + 'px';
             document.getElementById('expand-btn').style.display = newHeight > 50 ? 'flex' : 'none';
         }});
 
@@ -940,11 +992,25 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
 
         // WebSocket Setup
         let socket;
+        // 头部那个 "Linked" 原来是写死的，WS 断了也照样显示 Linked，
+        // 于是出现"手机说连着、电脑说 0 台"。改成跟着 socket 走。
+        function setLinkState(online) {{
+            const dot = document.querySelector('.status-dot');
+            const label = document.getElementById('device-count');
+            if (dot) {{
+                dot.style.background = online ? '#4caf50' : '#e53935';
+                dot.style.boxShadow = online ? '0 0 5px #4caf50' : '0 0 5px #e53935';
+            }}
+            if (label) label.innerText = online ? 'Linked' : '未连接';
+        }}
+        setLinkState(false);
+
         function connectWS() {{
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             socket = new WebSocket(`${{protocol}}//${{window.location.host}}/ws`);
             
             socket.onopen = () => {{
+                setLinkState(true);
                 socket.send(JSON.stringify({{ type: 'identity', device_id: deviceId, device_name: deviceName }}));
                 console.log('WS Connected');
             }};
@@ -973,13 +1039,15 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
                 }}
             }};
             
-            socket.onclose = () => setTimeout(connectWS, 3000);
+            socket.onclose = () => {{ setLinkState(false); setTimeout(connectWS, 3000); }};
+            socket.onerror = () => setLinkState(false);
         }}
         connectWS();
 
         sendBtn.onclick = async () => {{
             const text = textInput.value.trim();
-            if (!text || isUploading) return;
+            if (!text) return;
+            if (isUploading) {{ showStatus('正在传文件，传完才能发文字'); return; }}
             
             textInput.value = '';
             textInput.style.height = '40px';
@@ -994,18 +1062,37 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             }} catch(e) {{ alert('Send failed'); }}
         }};
 
-        fileInput.onchange = async () => {{
-            if (!fileInput.files.length || isUploading) return;
-            const files = Array.from(fileInput.files);
-            fileInput.value = '';
-            
-            for(const file of files) {{
-                await uploadFile(file);
+        let uploadChain = Promise.resolve();
+        fileInput.onchange = () => {{
+            // 先快照 FileList：value 一旦清空，实时列表就失效了。
+            const files = Array.from(fileInput.files || []);
+            if (!files.length) {{
+                showStatus('没有收到文件（系统选择器返回了空结果），请再试一次');
+                return;
             }}
+            showStatus(`正在发送 ${{files.length}} 个文件…`);
+            uploadChain = uploadChain.then(() =>
+                files.reduce((p, f) => p.then(() => uploadFile(f)), Promise.resolve())
+            ).catch((e) => {{ showStatus('发送中断：' + e); }});
+            // 清空放在下一个宏任务：同一轮里改 value 会打断部分安卓
+            // 文件管理器的收尾流程。
+            setTimeout(() => {{ fileInput.value = ''; }}, 800);
         }};
 
         async function uploadFile(file) {{
             isUploading = true;
+            try {{
+                await uploadOneFile(file);
+            }} catch (e) {{
+                showStatus(`发送 ${{file.name}} 失败：` + e);
+            }} finally {{
+                // 中途抛错也必须复位：isUploading 卡在 true 的话，
+                // 之后每次点 SEND 都会被开头的 return 静默挡掉。
+                isUploading = false;
+            }}
+        }}
+
+        async function uploadOneFile(file) {{
             const isImage = file.type.startsWith('image/');
             const isVideo = file.type.startsWith('video/');
             const msgType = isVideo ? 'video' : (isImage ? 'image' : 'file');
@@ -1051,20 +1138,19 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
                     progressWrapper.querySelector('.progress-inner').style.width = percent + '%';
                     progressWrapper.querySelector('div').innerText = percent + '%';
                 }} catch (e) {{
-                    alert('Upload failed: ' + file.name);
+                    showStatus(`上传中断：${{file.name}}（${{e}}）`);
                     // Remove pending marker on failure
                     el.dataset.pending = 'false';
                     const list = pendingUploads.get(file.name) || [];
                     const idx = list.indexOf(el);
                     if (idx >= 0) {{ list.splice(idx, 1); }}
-                    if (list.length === 0) pendingUploads.delete(name);
+                    if (list.length === 0) pendingUploads.delete(file.name);
                     break;
                 }}
             }}
             
             progressWrapper.remove();
             el.querySelector('.bubble').innerHTML += ' <span style="color:#4caf50">✓</span>';
-            isUploading = false;
         }}
 
         // Dragon-drop support
@@ -1094,4 +1180,45 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         theme_css = theme_css,
         logo_base64 = logo_base64
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_index;
+
+    #[test]
+    fn rendered_page_has_balanced_braces_and_key_parts() {
+        // format! 的花括号错误只在运行时爆发：渲染一次确保不 panic，
+        // 且关键交互元素仍然存在。
+        let page = render_index("retro", "system", "data:image/png;base64,AAA");
+        assert!(page.contains("id=\"file-input\""));
+        assert!(page.contains("text-size-adjust"));
+        assert!(page.contains("uploadChain"));
+        assert!(page.contains("set_file") == false);
+        let open = page.matches('{').count();
+        let close = page.matches('}').count();
+        assert_eq!(open, close, "unbalanced braces in rendered page");
+    }
+
+    /// 主题 extra 块是数据、不是 format 字面量：里面残留的 {{ }} 会被原样输出，
+    /// 浏览器把整条规则解析成空块（实测 .theme-mica .retro-btn.send-btn { }），
+    /// 安卓端 SEND 按钮因此拿不到蓝色底、白字写在 50% 白上完全看不见。
+    #[test]
+    fn theme_extra_css_keeps_its_declarations() {
+        for theme in ["mica", "acrylic", "sticky-note", "retro"] {
+            let page = render_index(theme, "system", "data:image/png;base64,AAA");
+            assert!(!page.contains("{{"), "{theme}: doubled brace leaked into CSS");
+            assert!(!page.contains("}}"), "{theme}: doubled brace leaked into CSS");
+        }
+
+        let mica = render_index("mica", "light", "data:image/png;base64,AAA");
+        let at = mica
+            .find(".theme-mica .retro-btn.send-btn {")
+            .expect("mica send button rule missing");
+        let body = &mica[at..at + 160];
+        assert!(
+            body.contains("background: var(--send-button-background)"),
+            "mica send button rule is empty: {body}"
+        );
+    }
 }

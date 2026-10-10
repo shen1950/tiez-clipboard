@@ -49,13 +49,15 @@ export const useAppActions = ({
     [mqttEnabled]
   );
 
-  const clearHistory = useCallback(() => {
+  const clearHistory = useCallback((contentType?: string | null, typeLabel?: string | null) => {
     openConfirm({
-      title: t("clear_confirm_title"),
-      message: t("clear_confirm_message"),
+      title: contentType ? t("clear_confirm_title_type").replace("{type}", typeLabel || contentType) : t("clear_confirm_title"),
+      message: contentType
+        ? t("clear_confirm_message_type").replace("{type}", typeLabel || contentType)
+        : t("clear_confirm_message"),
       onConfirm: async () => {
         try {
-          await invoke("clear_clipboard_history");
+          await invoke("clear_clipboard_history", { contentType: contentType ?? null });
           fetchHistory(true);
         } catch (err) {
           console.error("清空失败", err);

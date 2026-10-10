@@ -35,6 +35,8 @@ export interface ClipboardItemProps {
   onCopy: (withFormat?: boolean) => void;
   onToggleReveal: (e: MouseEvent) => void;
   onOpen: (e: MouseEvent) => void;
+  /** 打开文件所在位置：只在条目内容能定位到本地文件时显示 */
+  onRevealLocation?: (e: MouseEvent) => void;
   onTogglePin: (e: MouseEvent) => void;
   onDelete: (e: MouseEvent) => void;
   onToggleTagEditor: (e: MouseEvent) => void;

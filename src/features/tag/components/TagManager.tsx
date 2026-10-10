@@ -44,7 +44,8 @@ export default function TagManager({ t, theme }: TagManagerProps) {
     const [isCreatingItem, setIsCreatingItem] = useState(false);
     const [editingItem, setEditingItem] = useState<{ id: number, content: string } | null>(null);
     const [newItemContent, setNewItemContent] = useState('');
-    const [sidebarWidth, setSidebarWidth] = useState(130);
+    // 默认宽度按主窗口 352px 定的：留到 176px 才能不拉开就看完常见标签名。
+    const [sidebarWidth, setSidebarWidth] = useState(176);
     const [sidebarHeight, setSidebarHeight] = useState(180);
     const [isResizing, setIsResizing] = useState(false);
     const [isStacked, setIsStacked] = useState(false);
@@ -293,7 +294,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                             const newCollapsed = !isCollapsed;
                             setIsCollapsed(newCollapsed);
                             if (!newCollapsed && sidebarWidth < 110) {
-                                setSidebarWidth(160);
+                                setSidebarWidth(176);
                             }
                         }}
                     >

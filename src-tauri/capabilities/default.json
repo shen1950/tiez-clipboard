@@ -30,6 +30,7 @@
     "core:window:allow-create",
     "core:window:allow-get-all-windows",
     "core:webview:allow-create-webview-window",
+    "core:webview:allow-set-webview-zoom",
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-set-focusable",
     "core:path:default",

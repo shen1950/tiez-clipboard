@@ -1,8 +1,11 @@
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, HelpCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import { QRCodeCanvas } from "qrcode.react";
+import type { FileTransferDevice } from "../../../file-transfer/types";
 
 interface FileTransferSettingsGroupProps {
     t: (key: string) => string;
@@ -25,7 +28,9 @@ interface FileTransferSettingsGroupProps {
     setFileServerAutoClose: (val: boolean) => void;
     fileTransferAutoCopy: boolean;
     setFileTransferAutoCopy: (val: boolean) => void;
-    onOpenChat?: () => void;
+    fileServerAutoCloseSeconds: string;
+    setFileServerAutoCloseSeconds: (val: string) => void;
+    onRequestChat?: () => void;
     fileTransferPath: string;
     saveSetting: (key: string, val: string) => void;
     fetchEffectiveTransferPath: () => void;
@@ -52,11 +57,43 @@ const FileTransferSettingsGroup = ({
     setFileServerAutoClose,
     fileTransferAutoCopy,
     setFileTransferAutoCopy,
-    onOpenChat,
+    fileServerAutoCloseSeconds,
+    setFileServerAutoCloseSeconds,
+    onRequestChat,
     fileTransferPath,
     saveSetting,
     fetchEffectiveTransferPath
-}: FileTransferSettingsGroupProps) => (
+}: FileTransferSettingsGroupProps) => {
+    // 从剪贴板主窗口迁移过来的局域网同步状态：在线设备数实时刷新。
+    const [onlineDevices, setOnlineDevices] = useState<FileTransferDevice[]>([]);
+    // 自动关闭秒数：本地草稿，失焦/回车才提交，避免输入过程中把超时改成极小值。
+    const [autoCloseDraft, setAutoCloseDraft] = useState(fileServerAutoCloseSeconds);
+    useEffect(() => { setAutoCloseDraft(fileServerAutoCloseSeconds); }, [fileServerAutoCloseSeconds]);
+    const commitAutoCloseDraft = () => {
+        const cleaned = autoCloseDraft.replace(/[^0-9]/g, "");
+        const num = Math.min(86400, Math.max(0, parseInt(cleaned, 10) || 0));
+        setFileServerAutoCloseSeconds(String(num));
+        setAutoCloseDraft(String(num));
+    };
+    useEffect(() => {
+        let cancelled = false;
+        // 先拉一次当前快照：手机往往比设置页更早连上，
+        // 那种情况下 online-devices-updated 早就发完了，只等事件会一直显示 0。
+        invoke<FileTransferDevice[]>("get_online_devices")
+            .then((devices) => {
+                if (!cancelled) setOnlineDevices(devices || []);
+            })
+            .catch(() => { });
+        const unlisten = listen<FileTransferDevice[]>("online-devices-updated", (event) => {
+            if (!cancelled) setOnlineDevices(event.payload || []);
+        });
+        return () => {
+            cancelled = true;
+            unlisten.then((f) => f()).catch(() => { });
+        };
+    }, []);
+
+    return (
     <div className={`settings-group ${collapsed ? 'collapsed' : ''}`}>
         <div className="group-header" onClick={onToggle}>
             <h3 style={{ margin: 0 }}>{t('file_transfer')}</h3>
@@ -180,9 +217,28 @@ const FileTransferSettingsGroup = ({
                             </label>
                         </div>
 
+                        <div className="setting-item">
+                            <div className="item-label-group">
+                                <span className="item-label">{t('auto_close_seconds_label')}</span>
+                            </div>
+                            <input
+                                className="search-input"
+                                style={{ borderRadius: '4px', padding: '8px', width: '90px' }}
+                                value={autoCloseDraft}
+                                onChange={(e) => setAutoCloseDraft(e.target.value.replace(/[^0-9]/g, ""))}
+                                onBlur={commitAutoCloseDraft}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        commitAutoCloseDraft();
+                                    }
+                                }}
+                                placeholder="300"
+                            />
+                        </div>
                         {showAutoCloseHint && (
                             <div style={{ margin: '4px 8px 12px', padding: '10px 14px', background: 'rgba(72, 123, 219, 0.08)', border: '1px solid rgba(72, 123, 219, 0.2)', borderRadius: '8px', fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-                                {t('auto_close_hint')}
+                                {(t('auto_close_hint_dynamic') || '').replace('{n}', autoCloseDraft || '0')}
                             </div>
                         )}
                         <div className="setting-item">
@@ -215,21 +271,23 @@ const FileTransferSettingsGroup = ({
                                     <div className="transfer-info">
                                         <div className="scan-title">{t('scan_to_send')}</div>
                                         <div className="info-row">
-                                            <span className="info-label">STATUS</span>
-                                            <span className="status-online">ONLINE</span>
-                                        </div>
-                                        <div className="info-row">
-                                            <span className="info-label">HOST</span>
+                                            <span className="info-label">LOCAL IP</span>
                                             <span className="info-value">{localIp}</span>
                                         </div>
                                         <div className="info-row">
                                             <span className="info-label">PORT</span>
                                             <span className="info-value">{actualPort}</span>
                                         </div>
+                                        <div className="info-row">
+                                            <span className="info-label">ONLINE</span>
+                                            <span className="status-online">
+                                                {onlineDevices.length} {t('devices_online')}
+                                            </span>
+                                        </div>
                                         <div className="open-browser-btn" onClick={() => {
-                                            if (onOpenChat) onOpenChat();
+                                            if (onRequestChat) onRequestChat();
                                         }}>
-                                            {t('open_page')}
+                                            {t('open_chat')}
                                         </div>
                                     </div>
                                 </div>
@@ -279,6 +337,7 @@ const FileTransferSettingsGroup = ({
             </div>
         )}
     </div>
-);
+    );
+};
 
 export default FileTransferSettingsGroup;

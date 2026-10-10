@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatSensitivePreview } from "./utils";
+import { formatSensitivePreview, resolveEntryFilePath } from "./utils";
 
 describe("formatSensitivePreview", () => {
   describe("空值处理", () => {
@@ -148,5 +148,28 @@ describe("formatSensitivePreview", () => {
       const result = formatSensitivePreview("😀😁😂🤣😃😄😅", "text");
       expect(result).toContain("...");
     });
+  });
+});
+
+describe("resolveEntryFilePath", () => {
+  it("图片/视频/文件条目的本地路径可定位", () => {
+    expect(resolveEntryFilePath("D:\\Clips\\gl2026-01-01.webp")).toBe(
+      "D:\\Clips\\gl2026-01-01.webp"
+    );
+    expect(resolveEntryFilePath("D:/System and Memory/a.png")).toBe("D:/System and Memory/a.png");
+    expect(resolveEntryFilePath("\\\\NAS\\share\\a.png")).toBe("\\\\NAS\\share\\a.png");
+  });
+
+  it("多文件条目取第一个路径", () => {
+    expect(resolveEntryFilePath("D:\\a.png\r\nD:\\b.png")).toBe("D:\\a.png");
+  });
+
+  it("没有落盘位置的条目不给定位入口", () => {
+    expect(resolveEntryFilePath("data:image/png;base64,iVBORw0KGgo=")).toBeNull();
+    expect(resolveEntryFilePath("https://github.com/tiez")).toBeNull();
+    expect(resolveEntryFilePath("今天去实验室测了循环数据")).toBeNull();
+    expect(resolveEntryFilePath("D:relative\\a.png")).toBeNull();
+    expect(resolveEntryFilePath("")).toBeNull();
+    expect(resolveEntryFilePath(undefined)).toBeNull();
   });
 });

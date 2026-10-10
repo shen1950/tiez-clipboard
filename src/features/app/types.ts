@@ -251,6 +251,8 @@ export interface AppState {
   fileTransferAutoCopy: boolean;
   setFileTransferAutoCopy: StateSetter<boolean>;
   fileServerAutoClose: boolean;
+  fileServerAutoCloseSeconds: string;
+  setFileServerAutoCloseSeconds: (val: string) => void;
   setFileServerAutoClose: StateSetter<boolean>;
   soundEnabled: boolean;
   setSoundEnabled: StateSetter<boolean>;

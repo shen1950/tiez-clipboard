@@ -4,6 +4,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ClipboardEntry } from "../types";
 import type { VirtualClipboardListHandle } from "../../features/clipboard/types";
+import { resolveEntryFilePath } from "../lib/utils";
 
 interface UseClipboardActionsOptions {
   t: (key: string) => string;
@@ -76,6 +77,19 @@ export const useClipboardActions = ({
     [pushToast, t]
   );
 
+  const revealFileLocation = useCallback(
+    async (item: ClipboardEntry) => {
+      const filePath = resolveEntryFilePath(item.content);
+      if (!filePath) return;
+      try {
+        await invoke("open_file_location", { filePath });
+      } catch (err) {
+        pushToast(t("open_failed") + (err?.toString() || ""), 3000);
+      }
+    },
+    [pushToast, t]
+  );
+
   const deleteEntry = useCallback(
     async (e: ReactMouseEvent, id: number) => {
       e.stopPropagation();
@@ -141,6 +155,7 @@ export const useClipboardActions = ({
   return {
     copyToClipboard,
     openContent,
+    revealFileLocation,
     deleteEntry,
     togglePin,
     handleUpdateTags

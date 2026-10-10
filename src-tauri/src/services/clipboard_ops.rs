@@ -760,8 +760,8 @@ fn generate_cf_html(html: &str) -> String {
     format!("{}{}", header, html_content)
 }
 fn copy_image_bytes_to_clipboard(bytes: Vec<u8>, current_time: u64) -> AppResult<(u64, u64, u64)> {
-    // Check if it's a GIF by magic number
-    let is_gif = bytes.len() > 3 && &bytes[0..3] == b"GIF";
+    // 动图容器（GIF / 动图 WebP）必须把原始字节一起交给目标应用
+    let animated_ext = crate::services::clipboard::animated_image_format(&bytes);
 
     let (width, height, raw_bytes) = {
         let img = image::load_from_memory(&bytes)
@@ -781,13 +781,11 @@ fn copy_image_bytes_to_clipboard(bytes: Vec<u8>, current_time: u64) -> AppResult
     let visual_hash =
         calc_image_hash_from_rgba(width, height, &raw_bytes).unwrap_or(pixel_hash as i64) as u64;
 
-    let gif_hash = if is_gif {
+    let animated_hash = animated_ext.map(|_| {
         let mut hasher = DefaultHasher::new();
         bytes.hash(&mut hasher);
-        Some(hasher.finish())
-    } else {
-        None
-    };
+        hasher.finish()
+    });
 
     // Prepare PNG data for better compatibility
     let mut png_buf: Vec<u8> = Vec::new();
@@ -805,29 +803,29 @@ fn copy_image_bytes_to_clipboard(bytes: Vec<u8>, current_time: u64) -> AppResult
         hasher.finish()
     };
 
-    let gif_temp_path = unsafe {
+    let animated_temp_path = unsafe {
         crate::infrastructure::windows_api::win_clipboard::set_clipboard_image_with_formats(
             crate::infrastructure::windows_api::win_clipboard::ImageData {
                 width: width as usize,
                 height: height as usize,
                 bytes: raw_bytes,
             },
-            if is_gif { Some(&bytes) } else { None },
+            animated_ext.map(|ext| (ext, bytes.as_slice())),
             Some(&png_buf),
         )
         .map_err(AppError::from)?
     };
 
-    if let Some(path) = gif_temp_path {
+    if let Some(path) = animated_temp_path {
         // Also hash the temp path to prevent echo on CF_HDROP
         let normalized = path.trim().replace("\r\n", "\n");
         let mut hasher = DefaultHasher::new();
         normalized.hash(&mut hasher);
         let path_hash = hasher.finish();
-        return Ok((path_hash, gif_hash.unwrap_or(png_hash), visual_hash));
+        return Ok((path_hash, animated_hash.unwrap_or(png_hash), visual_hash));
     }
 
-    Ok((gif_hash.unwrap_or(png_hash), pixel_hash, visual_hash))
+    Ok((animated_hash.unwrap_or(png_hash), pixel_hash, visual_hash))
 }
 
 async fn copy_text_with_retry(content: &str) -> AppResult<()> {

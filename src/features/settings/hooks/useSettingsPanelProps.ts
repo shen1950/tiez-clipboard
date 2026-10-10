@@ -23,7 +23,6 @@ interface UseSettingsPanelPropsOptions {
   fetchEffectiveTransferPath: () => void;
   handleResetSettings: () => void;
   toggleGroup: (group: string) => void;
-  onOpenChat?: () => void;
   state: AppState;
 }
 
@@ -45,7 +44,6 @@ export const useSettingsPanelProps = ({
   fetchEffectiveTransferPath,
   handleResetSettings,
   toggleGroup,
-  onOpenChat,
   state
 }: UseSettingsPanelPropsOptions): SettingsPanelProps => {
   const {
@@ -145,6 +143,7 @@ export const useSettingsPanelProps = ({
     setSoundVolume,
     showAutoCloseHint,
     fileServerAutoClose,
+    fileServerAutoCloseSeconds,
     fileTransferAutoCopy,
     fileTransferPath,
     installedApps,
@@ -213,6 +212,7 @@ export const useSettingsPanelProps = ({
     setFileTransferAutoOpen,
     setShowAutoCloseHint,
     setFileServerAutoClose,
+    setFileServerAutoCloseSeconds,
     setFileTransferAutoCopy,
     setShowAppSelector,
     aiEnabled,
@@ -331,6 +331,8 @@ export const useSettingsPanelProps = ({
     setSoundVolume,
     showAutoCloseHint,
     fileServerAutoClose,
+    fileServerAutoCloseSeconds,
+    setFileServerAutoCloseSeconds,
     fileTransferAutoCopy,
     fileTransferPath,
     installedApps,
@@ -414,8 +416,7 @@ export const useSettingsPanelProps = ({
     fetchEffectiveTransferPath,
     setShowAppSelector,
     handleResetSettings,
-    onOpenChat,
-    aiEnabled,
+      aiEnabled,
     setAiEnabled,
     aiTargetLang,
     setAiTargetLang,

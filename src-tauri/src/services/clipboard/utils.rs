@@ -82,6 +82,58 @@ fn image_mime_by_ext(ext: &str) -> &'static str {
     }
 }
 
+/// 返回动图容器对应的扩展名，静图为 `None`。
+/// `image`  crate 只会解出第一帧，任何解码→重编码都会把动图压成静图，
+/// 因此调用方必须靠这个真值判断来决定是否保留原始字节。
+pub fn animated_image_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"GIF8") {
+        return Some("gif");
+    }
+    if has_webp_animation_chunk(bytes) {
+        return Some("webp");
+    }
+    None
+}
+
+/// 动图 WebP 一定有 ANMF 帧块（VP8X 的 flag 位在不同编码器上有出入，
+/// 按块结构判断最稳）。只遍历容器顶层块，避免帧内 VP8 载荷里的字节误命中。
+fn has_webp_animation_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return false;
+    }
+
+    let mut offset = 12usize;
+    while offset + 8 <= bytes.len() {
+        let four_cc = &bytes[offset..offset + 4];
+        let size = u32::from_le_bytes([
+            bytes[offset + 4],
+            bytes[offset + 5],
+            bytes[offset + 6],
+            bytes[offset + 7],
+        ]) as usize;
+        if four_cc == b"ANMF" {
+            return true;
+        }
+        // RIFF 块按偶数字节对齐
+        offset += 8 + size + (size & 1);
+    }
+
+    false
+}
+
+/// 对条目内容（本地路径或 `data:` URL）判断是否为动图容器。
+pub fn animated_image_format_of_content(content: &str) -> Option<&'static str> {
+    let bytes = if let Some(rest) = content.trim_start().strip_prefix("data:") {
+        let payload = rest.split(',').nth(1).unwrap_or("");
+        base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .ok()?
+    } else {
+        std::fs::read(content).ok()?
+    };
+    animated_image_format(&bytes)
+}
+
 fn normalize_remote_img_url(src: &str) -> Option<String> {
     let trimmed = src.trim();
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
@@ -1218,10 +1270,11 @@ pub fn truncate_html_for_preview(html: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        app_cleanup_policy_matches, apply_cleanup_rules, attach_rich_image_fallback,
-        attach_rich_named_formats, build_entry_preview, collapse_preview_whitespace,
-        derive_rich_text_content, extract_animated_image_data_url_from_html,
-        extract_animated_image_data_url_from_text, extract_first_image_data_url_from_html,
+        animated_image_format, app_cleanup_policy_matches, apply_cleanup_rules,
+        attach_rich_image_fallback, attach_rich_named_formats, build_entry_preview,
+        collapse_preview_whitespace, derive_rich_text_content,
+        extract_animated_image_data_url_from_html, extract_animated_image_data_url_from_text,
+        extract_first_image_data_url_from_html, has_webp_animation_chunk,
         infer_rich_html_from_plain_text, normalize_clipboard_plain_text,
         parse_app_cleanup_policies, parse_cf_html, parse_cleanup_rules,
         split_rich_html_and_image_fallback, split_rich_html_and_named_formats,
@@ -1231,6 +1284,51 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn riff_webp(chunks: &[(&[u8], &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&[0u8; 4]); // 长度对判定无关
+        out.extend_from_slice(b"WEBP");
+        for (four_cc, payload) in chunks {
+            out.extend_from_slice(four_cc);
+            out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            out.extend_from_slice(payload);
+            if payload.len() % 2 == 1 {
+                out.push(0);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn animated_image_format_detects_gif_and_animated_webp() {
+        assert_eq!(animated_image_format(b"GIF89a...."), Some("gif"));
+        assert_eq!(
+            animated_image_format(&riff_webp(&[
+                (b"VP8X", &[0x12, 0, 0, 0, 0, 0, 0]),
+                (b"ANIM", &[0, 0, 0, 0, 0, 0]),
+                (b"ANMF", &[0u8; 6]),
+            ])),
+            Some("webp")
+        );
+    }
+
+    #[test]
+    fn animated_image_format_ignores_static_images() {
+        // 静图 WebP：只有 VP8 帧
+        assert_eq!(
+            animated_image_format(&riff_webp(&[(b"VP8 ", &[0u8; 4])])),
+            None
+        );
+        assert_eq!(animated_image_format(b"\x89PNG\r\n\x1a\n...."), None);
+        // 帧载荷里恰好出现 ANMF 字节也不能误判
+        assert_eq!(
+            animated_image_format(&riff_webp(&[(b"VP8 ", b"xxANMFxx")])),
+            None
+        );
+        assert!(!has_webp_animation_chunk(b"not a riff at all"));
+    }
 
     fn create_test_png_file(name: &str) -> PathBuf {
         let unique = SystemTime::now()

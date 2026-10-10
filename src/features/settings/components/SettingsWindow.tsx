@@ -19,7 +19,7 @@ import { useAppActions } from "../../../shared/hooks/useAppActions";
 import { useOverlays } from "../../../shared/hooks/useOverlays";
 import { useToastListener } from "../../../shared/hooks/useToastListener";
 import { useSettingsPanelProps } from "../hooks/useSettingsPanelProps";
-import { requestFileTransferInMainWindow } from "../lib/settingsWindowControls";
+import { useSettingsWindowFont } from "../../../shared/hooks/useSettingsWindowFont";
 
 /**
  * Standalone settings window (label: "settings", routed via ?window=settings).
@@ -29,6 +29,9 @@ import { requestFileTransferInMainWindow } from "../lib/settingsWindowControls";
  */
 const SettingsWindow = () => {
     const appState = useAppState();
+    // 设置窗自己的字号/字体（隐藏创建的 webview 会被 WebView2 算错 DPI，
+    // 这里不做自动校正，交给用户在界面设置里自己定）。
+    useSettingsWindowFont(appState.settingsLoaded);
     const {
         appSettings,
         setAppSettings,
@@ -71,6 +74,7 @@ const SettingsWindow = () => {
         captureRichText,
         fileTransferAutoCopy,
         fileServerAutoClose,
+        fileServerAutoCloseSeconds,
         fileTransferAutoOpen,
         persistent,
         soundVolume,
@@ -190,6 +194,7 @@ const SettingsWindow = () => {
         captureRichText,
         fileTransferAutoCopy,
         fileServerAutoClose,
+        fileServerAutoCloseSeconds,
         fileTransferAutoOpen,
         persistent,
         soundVolume,
@@ -284,7 +289,6 @@ const SettingsWindow = () => {
         fetchEffectiveTransferPath,
         handleResetSettings,
         toggleGroup,
-        onOpenChat: requestFileTransferInMainWindow,
         state: appState
     });
 

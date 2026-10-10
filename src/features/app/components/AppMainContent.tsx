@@ -3,7 +3,6 @@ import type { RefObject, ReactNode } from "react";
 import { motion, Reorder, useDragControls } from "framer-motion";
 import type { DragControls } from "framer-motion";
 import { ArrowUp, Clipboard } from "lucide-react";
-import FileTransferChatView from "../../file-transfer/components/FileTransferChatView";
 import TagManager from "../../tag/components/TagManager";
 import EmojiPanel from "../../emoji/components/EmojiPanel";
 import RecycleBinPanel from "../../recycle-bin/components/RecycleBinPanel";
@@ -28,9 +27,6 @@ interface AppMainContentProps {
   recycleBinRetentionDays: number;
   onCloseRecycleBin: () => void;
   tagColors: Record<string, string>;
-  chatMode: boolean;
-  localIp: string;
-  actualPort: string;
   emojiFavorites: string[];
   setEmojiFavorites: (val: string[] | ((prev: string[]) => string[])) => void;
   emojiPanelTab: "emoji" | "favorites";
@@ -103,9 +99,6 @@ const AppMainContent = ({
   recycleBinRetentionDays,
   onCloseRecycleBin,
   tagColors,
-  chatMode,
-  localIp,
-  actualPort,
   emojiFavorites,
   setEmojiFavorites,
   emojiPanelTab,
@@ -219,18 +212,6 @@ const AppMainContent = ({
           setActiveTab={setEmojiPanelTab}
           saveSetting={saveSetting}
         />
-      </motion.div>
-    );
-  }
-
-  if (chatMode) {
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        style={{ height: "100%", overflow: "hidden" }}
-      >
-        <FileTransferChatView t={t} localIp={localIp} actualPort={actualPort} />
       </motion.div>
     );
   }

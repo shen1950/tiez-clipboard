@@ -90,6 +90,76 @@ header {
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
 }
 
+/* 清空范围菜单：一次点击选范围（全部 / 单个类型） */
+.header-menu-anchor {
+  position: relative;
+  display: flex;
+}
+
+.header-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10070;
+  min-width: 132px;
+  padding: 4px;
+  border-radius: 8px;
+  /* --bg-element 在 mica/acrylic 下是半透明的，菜单底下就是列表文字，
+     直接用会整片透出来。与预览面板同一套做法：不透明底色垫一层，
+     再叠主题表面色，既挡住列表又保留各主题的色调。 */
+  background-color: var(--bg-body);
+  background-image: linear-gradient(var(--bg-element), var(--bg-element));
+  border: 1px solid var(--line-soft, rgba(0, 0, 0, 0.12));
+  box-shadow: var(--shadow-md, 0 18px 38px rgba(15, 23, 42, 0.12));
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  box-sizing: border-box;
+}
+
+.header-menu-label {
+  padding: 4px 8px 5px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  opacity: 0.72;
+}
+
+.header-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.header-menu-item:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.14));
+}
+
+.header-menu-item.active {
+  background: var(--accent-soft, rgba(128, 128, 128, 0.2));
+}
+
+.header-menu-item--primary {
+  font-weight: 700;
+}
+
+.header-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line-soft, rgba(128, 128, 128, 0.22));
+}
+
 .header-chat-btn {
   width: 30px;
   height: 30px;

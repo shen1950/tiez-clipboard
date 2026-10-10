@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -25,13 +25,11 @@ interface AppHeaderProps {
   showEmojiPanel: boolean;
   setShowEmojiPanel: (val: boolean) => void;
   emojiPanelEnabled: boolean;
-  chatMode: boolean;
-  fileServerEnabled: boolean;
   showRecycleBin: boolean;
   setShowRecycleBin: (val: boolean) => void;
   isWindowPinned: boolean;
   setIsWindowPinned: (val: boolean) => void;
-  clearHistory: () => void;
+  clearHistory: (contentType?: string | null, typeLabel?: string | null) => void;
   showSearchBox: boolean;
   search: string;
   setSearch: (val: string) => void;
@@ -49,9 +47,12 @@ interface AppHeaderProps {
   typeFilter: string | null;
   setTypeFilter: (val: string | null) => void;
   onBack: () => void;
-  onToggleChat: () => void;
   onOpenSettings: () => void;
+  onOpenChat?: () => void;
 }
+
+/** 类型页签与「按类型清空」菜单共用同一份顺序。 */
+const CONTENT_TYPES = ["text", "image", "file", "url", "code", "video", "rich_text"];
 
 const AppHeader = ({
   t,
@@ -62,8 +63,6 @@ const AppHeader = ({
   showEmojiPanel,
   setShowEmojiPanel,
   emojiPanelEnabled,
-  chatMode,
-  fileServerEnabled,
   showRecycleBin,
   setShowRecycleBin,
   isWindowPinned,
@@ -86,8 +85,8 @@ const AppHeader = ({
   typeFilter,
   setTypeFilter,
   onBack,
-  onToggleChat,
-  onOpenSettings
+  onOpenSettings,
+  onOpenChat
 }: AppHeaderProps) => {
   const getTypeName = (type: string) => {
     switch (type) {
@@ -100,6 +99,34 @@ const AppHeader = ({
       case "rich_text": return t('type_rich_text');
       default: return t('type_text') || 'Text';
     }
+  };
+
+  // 清空菜单：一次点击选范围，避免"想清一类却清了全部"。
+  const [clearMenuOpen, setClearMenuOpen] = useState(false);
+  const clearMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!clearMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!clearMenuRef.current?.contains(e.target as Node)) setClearMenuOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // 捕获阶段拦下 Esc，只关菜单，别连带把主窗口也隐藏了。
+      e.stopPropagation();
+      setClearMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [clearMenuOpen]);
+
+  const runClear = (type: string | null) => {
+    setClearMenuOpen(false);
+    clearHistory(type, type ? getTypeName(type) : null);
   };
 
   return (
@@ -139,9 +166,33 @@ const AppHeader = ({
 
         {!showSettings && !showTagManager && !showEmojiPanel && (
           <>
-            <button className="btn-icon" title={t('clear_history')} onClick={clearHistory}>
-              <Trash2 size={16} />
-            </button>
+            <div className="header-menu-anchor window-no-drag" ref={clearMenuRef}>
+              <button
+                className={`btn-icon ${clearMenuOpen ? 'active' : ''}`}
+                title={t('clear_history')}
+                onClick={() => setClearMenuOpen(open => !open)}
+              >
+                <Trash2 size={16} />
+              </button>
+              {clearMenuOpen && (
+                <div className="header-menu">
+                  <div className="header-menu-label">{t('clear_scope')}</div>
+                  <button className="header-menu-item header-menu-item--primary" onClick={() => runClear(null)}>
+                    {t('clear_all')}
+                  </button>
+                  <div className="header-menu-divider" />
+                  {CONTENT_TYPES.map(type => (
+                    <button
+                      key={type}
+                      className={`header-menu-item ${typeFilter === type ? 'active' : ''}`}
+                      onClick={() => runClear(type)}
+                    >
+                      {getTypeName(type)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {tagManagerEnabled && (
               <button className="btn-icon" title={t('tag_manager') || '标签管理'} onClick={() => { setShowRecycleBin(false); setShowTagManager(true); }}>
                 <Tag size={16} />
@@ -164,15 +215,15 @@ const AppHeader = ({
             </button>
           </>
         )}
-        {fileServerEnabled && (
-          <button
-            className={`btn-icon header-chat-btn ${chatMode ? 'active' : ''}`}
-            title="Chat"
-            onClick={onToggleChat}
-          >
-            <MessageSquare size={16} />
-          </button>
-        )}
+        {/* 常驻：之前被 fileServerEnabled 门控，服务一自动关闭按钮就跟着消失，
+            用户以为功能时有时无。 */}
+        <button
+          className="btn-icon header-chat-btn"
+          title={t('open_chat')}
+          onClick={onOpenChat}
+        >
+          <MessageSquare size={16} />
+        </button>
         <button className="btn-icon" title={t('hide')} onClick={async () => {
           invoke("hide_window_cmd").catch(console.error);
         }}>
@@ -273,11 +324,11 @@ const AppHeader = ({
                   }
                 }}
               >
-                {['text', 'image', 'file', 'url', 'code', 'video', 'rich_text'].map(t => (
+                {CONTENT_TYPES.map(type => (
                   <button
-                    key={t}
-                    className={`btn-icon ${typeFilter === t ? 'active' : ''}`}
-                    onClick={() => setTypeFilter(typeFilter === t ? null : t)}
+                    key={type}
+                    className={`btn-icon ${typeFilter === type ? 'active' : ''}`}
+                    onClick={() => setTypeFilter(typeFilter === type ? null : type)}
                     style={{
                       width: 'auto',
                       padding: '4px 8px',
@@ -285,11 +336,11 @@ const AppHeader = ({
                       borderRadius: '4px',
                       whiteSpace: 'nowrap',
                       flexShrink: 0,
-                      opacity: typeFilter === t ? 1 : 0.7
+                      opacity: typeFilter === type ? 1 : 0.7
                     }}
-                    title={getTypeName(t)}
+                    title={getTypeName(type)}
                   >
-                    {getTypeName(t)}
+                    {getTypeName(type)}
                   </button>
                 ))}
               </div>

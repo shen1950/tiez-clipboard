@@ -119,8 +119,11 @@ body.compact-preview #root>* {
     word-break: break-word;
     overflow-wrap: break-word;
     white-space: pre-wrap;
-    font-size: 13px;
-    line-height: 22px;
+    /* 字号/字体可在「界面设置」里调，也能在预览窗里 Ctrl+滚轮直接改；
+       两个窗口共用同一个 CSS 变量，测量探针量到的就是预览窗渲染的。 */
+    font-size: var(--preview-font-size, 13px);
+    line-height: var(--preview-line-height, 22px);
+    font-family: var(--preview-font-family, inherit);
     scrollbar-width: thin;
 }
 
@@ -149,6 +152,12 @@ body.compact-preview #root>* {
     border-radius: 4px;
 }
 
+/* 富文本快照里的内嵌图不允许把面板撑出横向滚动；探针与预览同走此规则，
+   高度测量与实际渲染保持一致。 */
+.compact-preview-panel .preview-content img {
+    max-width: 100%;
+}
+
 .compact-preview-panel .preview-content video {
     background: #000;
 }
@@ -163,6 +172,9 @@ body.compact-preview #root>* {
 .compact-preview-panel .rich-text-preview {
     margin: 0;
     padding: 0;
+    /* 预览字号/字体设置要能盖住 rich-text-preview.css 里的 --font-main，
+       字号与行高则直接继承 .preview-content，保证测量与渲染一致。 */
+    font-family: var(--preview-font-family, var(--font-main));
 }
 
 .compact-preview-panel .rich-text-preview> :first-child {

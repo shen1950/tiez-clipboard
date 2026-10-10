@@ -43,6 +43,7 @@ interface UseClipboardItemRendererOptions {
   setSelectedIndex: Dispatch<SetStateAction<number>>;
   setRevealedIds: Dispatch<SetStateAction<Set<number>>>;
   openContent: (item: ClipboardEntry) => void;
+  revealFileLocation: (item: ClipboardEntry) => void;
   togglePin: (event: MouseEvent, id: number, isPinned: boolean) => void;
   deleteEntry: (event: MouseEvent, id: number) => void;
   setEditingTagsId: Dispatch<SetStateAction<number | null>>;
@@ -86,6 +87,7 @@ export const useClipboardItemRenderer = ({
   setSelectedIndex,
   setRevealedIds,
   openContent,
+  revealFileLocation,
   togglePin,
   deleteEntry,
   setEditingTagsId,
@@ -142,6 +144,10 @@ export const useClipboardItemRenderer = ({
           onOpen={(e) => {
             e.stopPropagation();
             openContent(item);
+          }}
+          onRevealLocation={(e) => {
+            e.stopPropagation();
+            revealFileLocation(item);
           }}
           onTogglePin={(e) => togglePin(e, item.id, item.is_pinned)}
           onDelete={(e) => deleteEntry(e, item.id)}

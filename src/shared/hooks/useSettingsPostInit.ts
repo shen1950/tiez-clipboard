@@ -91,6 +91,7 @@ interface UseSettingsPostInitOptions {
   setCloudSyncWebdavBasePath: (val: string) => void;
   setCloudSyncContentPrefs: (val: CloudSyncContentPrefs) => void;
   setFileServerAutoClose: (val: boolean) => void;
+  setFileServerAutoCloseSeconds: (val: string) => void;
   setFileTransferAutoOpen: (val: boolean) => void;
   setFileTransferAutoCopy: (val: boolean) => void;
   setFileServerPort: (val: string) => void;
@@ -178,6 +179,7 @@ export const useSettingsPostInit = ({
   setCloudSyncWebdavBasePath,
   setCloudSyncContentPrefs,
   setFileServerAutoClose,
+  setFileServerAutoCloseSeconds,
   setFileTransferAutoOpen,
   setFileTransferAutoCopy,
   setFileServerPort,
@@ -392,6 +394,7 @@ export const useSettingsPostInit = ({
       setCloudSyncContentPrefs({ ...DEFAULT_CLOUD_SYNC_CONTENT_PREFS });
     }
     setFileServerAutoClose(settings["file_transfer_auto_close"] === "true");
+    setFileServerAutoCloseSeconds(settings["file_transfer_auto_close_seconds"] || "300");
     setFileTransferAutoOpen(settings["file_transfer_auto_open"] === "true");
     setFileTransferAutoCopy(settings["file_transfer_auto_copy"] === "true");
     if (settings["file_server_port"]) setFileServerPort(settings["file_server_port"]);

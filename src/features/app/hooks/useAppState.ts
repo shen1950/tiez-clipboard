@@ -152,6 +152,7 @@ export const useAppState = (): AppState => {
   const [fileTransferAutoOpen, setFileTransferAutoOpen] = useState(false);
   const [fileTransferAutoCopy, setFileTransferAutoCopy] = useState(false);
   const [fileServerAutoClose, setFileServerAutoClose] = useState(false);
+  const [fileServerAutoCloseSeconds, setFileServerAutoCloseSeconds] = useState("300");
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [pasteSoundEnabled, setPasteSoundEnabled] = useState(true);
   const [soundVolume, setSoundVolume] = useState(1.0);
@@ -416,6 +417,8 @@ export const useAppState = (): AppState => {
     setFileTransferAutoCopy,
     fileServerAutoClose,
     setFileServerAutoClose,
+    fileServerAutoCloseSeconds,
+    setFileServerAutoCloseSeconds,
     soundEnabled,
     setSoundEnabled,
     pasteSoundEnabled,

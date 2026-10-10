@@ -189,6 +189,13 @@ type HtmlContentProps = {
   preview?: boolean;
 };
 
+/**
+ * 供预览面板测量探针复用：与 HtmlContent 渲染走同一套净化/修源逻辑，
+ * 保证“量出来的高度”和“实际渲染的高度”一致。
+ */
+export const sanitizeRichPreviewHtml = (htmlContent: string): { html: string; hasRenderable: boolean } =>
+  sanitizeHTML(htmlContent, false);
+
 const HtmlContent = ({ htmlContent, fallbackText, className, style, preview }: HtmlContentProps) => {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const processedRef = useRef<{ htmlContent: string; preview?: boolean; fallbackText?: string } | null>(null);

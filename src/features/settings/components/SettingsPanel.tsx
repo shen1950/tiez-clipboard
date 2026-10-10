@@ -3,7 +3,7 @@ import { memo, useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { HelpCircle, Settings, Clipboard, Palette, Radio, Cloud, Sparkles, Send, AppWindow, Database, SlidersHorizontal, Info, Store } from "lucide-react";
+import { ChevronLeft, HelpCircle, Settings, Clipboard, Palette, Radio, Cloud, Sparkles, Send, AppWindow, Database, SlidersHorizontal, Info, Store } from "lucide-react";
 import SettingsNavigation, { type SettingsCategory } from "./SettingsNavigation";
 import type { Locale } from "../../../shared/types";
 import type { DefaultAppsMap, InstalledAppOption, SettingsSubpage, CloudSyncContentPrefs, DuplicateMode } from "../../app/types";
@@ -20,10 +20,12 @@ import CloudSyncSettingsGroup, { type CloudSyncStatusPayload } from "./groups/Cl
 import DefaultAppsSettingsGroup from "./groups/DefaultAppsSettingsGroup";
 import DataSettingsGroup from "./groups/DataSettingsGroup";
 import FileTransferSettingsGroup from "./groups/FileTransferSettingsGroup";
+import FileTransferChatView from "../../file-transfer/components/FileTransferChatView";
 import AiSettingsGroup from "./groups/AiSettingsGroup";
 import SettingsFooter from "./SettingsFooter";
 import ThemeStorePanel from "../../theme-store/components/ThemeStorePanel";
 import { CLOUD_SYNC_ENABLED } from "../../../shared/config/edition";
+import { takePendingOpenChat } from "../lib/settingsWindowControls";
 
 interface SettingsPanelProps {
     t: (key: string) => string;
@@ -143,6 +145,8 @@ interface SettingsPanelProps {
     fileTransferAutoOpen: boolean;
     showAutoCloseHint: boolean;
     fileServerAutoClose: boolean;
+    fileServerAutoCloseSeconds: string;
+    setFileServerAutoCloseSeconds: (val: string) => void;
     fileTransferAutoCopy: boolean;
     fileTransferPath: string;
 
@@ -224,7 +228,6 @@ interface SettingsPanelProps {
 
     setShowAppSelector: (val: string | null) => void;
     handleResetSettings: () => void;
-    onOpenChat?: () => void;
 
     // AI Settings
     aiEnabled: boolean;
@@ -261,7 +264,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         surfaceOpacity, setSurfaceOpacity,
         mqttEnabled, mqttServer, mqttPort, mqttUser, mqttPass, mqttTopic, mqttProtocol, mqttWsPath, mqttNotificationEnabled,
         cloudSyncEnabled, cloudSyncAuto, cloudSyncIntervalSec, cloudSyncSnapshotIntervalMin, cloudSyncWebdavUrl, cloudSyncWebdavUsername, cloudSyncWebdavPassword, cloudSyncWebdavBasePath, cloudSyncContentPrefs,
-        fileServerEnabled, fileServerPort, localIp, availableIps, setLocalIp, actualPort, fileTransferAutoOpen, showAutoCloseHint, fileServerAutoClose, fileTransferAutoCopy, fileTransferPath,
+        fileServerEnabled, fileServerPort, localIp, availableIps, setLocalIp, actualPort, fileTransferAutoOpen, showAutoCloseHint, fileServerAutoClose, fileServerAutoCloseSeconds, setFileServerAutoCloseSeconds, fileTransferAutoCopy, fileTransferPath,
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
         setSettingsSubpage, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDuplicateMode, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
@@ -278,7 +281,6 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         setFileServerEnabled, setFileServerPort, setFileTransferAutoOpen, setShowAutoCloseHint, setFileServerAutoClose, setFileTransferAutoCopy, fetchEffectiveTransferPath,
         setShowAppSelector, handleResetSettings,
         aiEnabled, setAiEnabled, aiTargetLang, setAiTargetLang, aiThinkingBudget, setAiThinkingBudget, saveSetting,
-        onOpenChat,
         aiProfiles, setAiProfiles, aiAssignedProfileTask, setAiAssignedProfileTask, aiAssignedProfileMouthpiece, setAiAssignedProfileMouthpiece, aiAssignedProfileTranslate, setAiAssignedProfileTranslate
     } = props;
 
@@ -454,6 +456,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
     }, []);
 
     const [selectedCategory, setSelectedCategory] = useState("general");
+    // 文件传输分区内的“对话模式”：从设置列表整体切换成聊天窗口，而不是在底部追加。
+    const [ftChatMode, setFtChatMode] = useState(false);
     const activeCategory = settingsSubpage === "home" ? selectedCategory : settingsSubpage;
     const selectCategory = (id: string) => {
         setIsRecording(false);
@@ -467,6 +471,21 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             setSettingsSubpage("home");
         }
     };
+
+    // 主窗口“局域网传输”按钮 / 移动端扫码页请求：跳到文件传输并进入对话模式。
+    useEffect(() => {
+        const enterChatMode = () => {
+            setSelectedCategory("file_transfer");
+            setSettingsSubpage("home");
+            setFtChatMode(true);
+        };
+        // 冷启动时这个窗口还没挂监听，事件会丢；用交接位补一次。
+        if (takePendingOpenChat()) enterChatMode();
+        const unlisten = listen("settings-open-chat", enterChatMode);
+        return () => {
+            unlisten.then((off) => off());
+        };
+    }, []);
 
     const categories: SettingsCategory[] = [
         { id: "general", label: t("general_settings"), icon: Settings, content: (
@@ -691,6 +710,39 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             />
         ) },
         { id: "file_transfer", label: t("file_transfer"), icon: Send, content: (
+            ftChatMode ? (
+                <div
+                    className="ft-chat-mode"
+                    style={{
+                        height: 'calc(100vh - 150px)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        borderRadius: '12px',
+                        overflow: 'hidden',
+                        border: '1px solid var(--border-color, rgba(0,0,0,0.1))'
+                    }}
+                >
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: '8px',
+                        padding: '8px 12px',
+                        borderBottom: '1px solid var(--border-color, rgba(0,0,0,0.1))'
+                    }}>
+                        <button
+                            className="btn-icon"
+                            title={t('back') || '返回'}
+                            onClick={() => setFtChatMode(false)}
+                            style={{ width: '26px', height: '26px' }}
+                        >
+                            <ChevronLeft size={16} />
+                        </button>
+                        <span style={{ fontSize: '13px', fontWeight: 600 }}>{t('file_transfer')}</span>
+                    </div>
+                    <div style={{ flex: 1, minHeight: 0 }}>
+                        <FileTransferChatView t={t} localIp={localIp} actualPort={actualPort} embedded />
+                    </div>
+                </div>
+            ) : (
+            <>
             <FileTransferSettingsGroup
                 t={t}
                 collapsed={false}
@@ -707,16 +759,20 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 fileTransferAutoOpen={fileTransferAutoOpen}
                 setFileTransferAutoOpen={setFileTransferAutoOpen}
                 showAutoCloseHint={showAutoCloseHint}
+                fileServerAutoCloseSeconds={fileServerAutoCloseSeconds}
+                setFileServerAutoCloseSeconds={setFileServerAutoCloseSeconds}
                 setShowAutoCloseHint={setShowAutoCloseHint}
                 fileServerAutoClose={fileServerAutoClose}
                 setFileServerAutoClose={setFileServerAutoClose}
                 fileTransferAutoCopy={fileTransferAutoCopy}
                 setFileTransferAutoCopy={setFileTransferAutoCopy}
-                onOpenChat={onOpenChat}
                 fileTransferPath={fileTransferPath}
                 saveSetting={saveSetting}
                 fetchEffectiveTransferPath={fetchEffectiveTransferPath}
+                onRequestChat={() => setFtChatMode(true)}
             />
+            </>
+            )
         ) },
         { id: "default_apps", label: t("default_apps"), icon: AppWindow, content: (
             <DefaultAppsSettingsGroup

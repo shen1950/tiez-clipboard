@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { emitTo, listen } from "@tauri-apps/api/event";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -20,6 +20,23 @@ import { formatFileSize, getConciseTime } from "../../../shared/lib/utils";
 import type { Locale } from "../../../shared/types";
 import { translations } from "../../../locales";
 import { toTauriLocalImageSrc } from "../../../shared/lib/localImageSrc";
+import {
+    applyPreviewFontVars,
+    DEFAULT_PREVIEW_FONT_SIZE,
+    extractRichImageFallback,
+    isAnimatedGifSrc,
+    isSpreadsheetLikeSource,
+    resolveRichImageSrc,
+    richHtmlLooksTabular
+} from "../lib/previewPanelSize";
+
+// 与主窗口侧的 compactPreviewLog 对应：预览窗口侧的布局数据也写进 tiez.log。
+const previewDebugLog = (stage: string, detail: Record<string, unknown>) => {
+    console.warn(`[CompactPreview][Window] ${stage}`, detail);
+    invoke("append_debug_log", {
+        line: `[preview-window] ${stage} ${JSON.stringify(detail)}`
+    }).catch(() => { });
+};
 
 type ImageSize = { width: number; height: number };
 
@@ -40,55 +57,18 @@ type PreviewPayload = {
     imageNatural?: ImageSize | null;
     /** 图片按面板算好的显示尺寸，CSS 按此精确渲染（KwikPaste：开窗前定尺寸）。 */
     imageDisplay?: ImageSize;
+    /** 主窗口算好的面板逻辑宽度：用于校正本 webview 的 DPR/缩放偏差。 */
+    panelLogicalWidth?: number;
+    /** 预览正文的字号与字体（界面设置里可调，也可在预览窗 Ctrl+滚轮直接改）。 */
+    previewFontSize?: number;
+    previewFontFamily?: string;
 };
 
-const RICH_IMAGE_FALLBACK_PREFIX = "<!--TIEZ_RICH_IMAGE:";
-const RICH_IMAGE_FALLBACK_SUFFIX = "-->";
-const TABULAR_RICH_HTML_RE = /<(table|tr|td|th|thead|tbody|tfoot|colgroup|col)\b/i;
-const SPREADSHEET_SOURCE_RE = /\b(excel|et|wps|sheet|spreadsheet|calc)\b/i;
+const PREVIEW_FONT_SIZE_MIN = 11;
+const PREVIEW_FONT_SIZE_MAX = 28;
 
-const extractRichImageFallback = (html?: string): { cleanHtml?: string; imagePayload?: string } => {
-    if (!html) return {};
-    const start = html.lastIndexOf(RICH_IMAGE_FALLBACK_PREFIX);
-    if (start < 0) return { cleanHtml: html };
-
-    const markerStart = start + RICH_IMAGE_FALLBACK_PREFIX.length;
-    const endRel = html.slice(markerStart).indexOf(RICH_IMAGE_FALLBACK_SUFFIX);
-    if (endRel < 0) return { cleanHtml: html };
-
-    const markerEnd = markerStart + endRel;
-    const payload = html.slice(markerStart, markerEnd).trim();
-    const cleanHtml = `${html.slice(0, start)}${html.slice(markerEnd + RICH_IMAGE_FALLBACK_SUFFIX.length)}`.trim();
-    return {
-        cleanHtml: cleanHtml || html,
-        imagePayload: payload || undefined
-    };
-};
-
-const resolveRichImageSrc = (payload: string): string | null => {
-    const value = payload.trim();
-    if (!value) return null;
-    if (value.startsWith("data:image/")) return value;
-    if (/^https?:\/\/asset\.localhost\//i.test(value)) return value;
-    return toTauriLocalImageSrc(value);
-};
-
-const isAnimatedGifSrc = (src?: string | null): boolean => {
-    const value = (src || "").trim().toLowerCase();
-    if (!value) return false;
-    return value.startsWith("data:image/gif") || /\.gif(?:$|[?#])/i.test(value);
-};
-
-const richHtmlLooksTabular = (html?: string): boolean => {
-    if (!html) return false;
-    return TABULAR_RICH_HTML_RE.test(html);
-};
-
-const isSpreadsheetLikeSource = (sourceApp?: string): boolean => {
-    const value = (sourceApp || "").trim();
-    if (!value) return false;
-    return SPREADSHEET_SOURCE_RE.test(value);
-};
+const clampPreviewFontSize = (value: number) =>
+    Math.min(PREVIEW_FONT_SIZE_MAX, Math.max(PREVIEW_FONT_SIZE_MIN, Math.round(value)));
 
 const RICH_PREVIEW_DEBUG = import.meta.env.DEV;
 const richPreviewFailureLog = (stage: string, detail?: Record<string, unknown>) => {
@@ -201,6 +181,9 @@ const applyTheme = (payload: PreviewPayload) => {
  */
 const CompactPreviewWindow = () => {
     const [payload, setPayload] = useState<PreviewPayload | null>(null);
+    const payloadRef = useRef<PreviewPayload | null>(null);
+    const appliedZoomRef = useRef(1);
+    const zoomFixTriesRef = useRef(0);
     const [richImageFallbackFailed, setRichImageFallbackFailed] = useState(false);
     const [sizeBytes, setSizeBytes] = useState<number | null>(null);
     // 渲染结果为空时回退纯文本：富文本快照/HTML 在个别内容上可能静默渲染成空白。
@@ -211,6 +194,16 @@ const CompactPreviewWindow = () => {
             .setAlwaysOnTop(true)
             .catch((err) => console.error(err));
         const unlisten = listen<PreviewPayload>("compact-preview-update", (event) => {
+            const p = event.payload;
+            previewDebugLog("payload received", {
+                contentType: p.contentType,
+                contentLen: (p.content || "").length,
+                previewLen: (p.preview || "").length,
+                hasHtml: !!p.htmlContent,
+                fontSize: p.clipboardItemFontSize
+            });
+            payloadRef.current = event.payload;
+            zoomFixTriesRef.current = 0;
             setPayload(event.payload);
             applyTheme(event.payload);
         });
@@ -219,6 +212,107 @@ const CompactPreviewWindow = () => {
         return () => {
             unlisten.then((f) => f());
         };
+    }, []);
+
+    // DPR 偏差补偿：WebView2 在隐藏窗口上初始化时会把显示器缩放算两遍
+    // （150% 的屏上报 2.25），CSS 视口因此只有应有宽度的 2/3——面板偏小、
+    // 长文被挤进滚动区。主窗口把面板逻辑宽度随 payload 发来，这里量实际视口
+    // 再用 setZoom 拉回。
+    // 关键：innerWidth 与 zoom 成反比，补偿值必须乘在当前 zoom 上
+    // （next = cur * innerWidth / intended），一步就落在 intended 上。
+    // 把 drift 当绝对值用会掉进 Z → 0.667/Z 的两端振荡，每帧触发一次 resize
+    // 再触发一次补偿——那就是预览窗口频闪的根因。
+    const scaleFixRafRef = useRef<number | null>(null);
+    const checkAndFixScale = () => {
+        if (scaleFixRafRef.current != null) return;
+        scaleFixRafRef.current = window.requestAnimationFrame(async () => {
+            scaleFixRafRef.current = null;
+            const intended = payloadRef.current?.panelLogicalWidth;
+            if (!intended || intended < 100) return;
+            const drift = window.innerWidth / intended;
+            if (Math.abs(drift - 1) <= 0.02) return;
+            if (drift < 0.3 || drift > 3) return; // 异常环境（如刚创建的 1px 窗口）不补偿
+            if (zoomFixTriesRef.current >= 3) return;
+            const nextZoom = Math.min(5, Math.max(0.2, appliedZoomRef.current * drift));
+            if (Math.abs(nextZoom - appliedZoomRef.current) < 0.005) return;
+            const prevZoom = appliedZoomRef.current;
+            zoomFixTriesRef.current += 1;
+            appliedZoomRef.current = nextZoom;
+            try {
+                await invoke("set_window_zoom", { label: "compact-preview", scale: nextZoom });
+                previewDebugLog("zoom compensated", {
+                    intended,
+                    zoom: Number(nextZoom.toFixed(4)),
+                    innerW: window.innerWidth,
+                    dpr: window.devicePixelRatio
+                });
+            } catch (err) {
+                appliedZoomRef.current = prevZoom;
+                previewDebugLog("zoom compensation failed", { err: String(err) });
+            }
+        });
+    };
+
+    // 预览字号/字体：payload 给基线，Ctrl+滚轮的临时值优先。
+    const [fontOverride, setFontOverride] = useState<number | null>(null);
+    const effectivePreviewFontSize = fontOverride ?? payload?.previewFontSize;
+    useEffect(() => {
+        applyPreviewFontVars(document.documentElement, {
+            size: effectivePreviewFontSize,
+            family: payload?.previewFontFamily
+        });
+    }, [effectivePreviewFontSize, payload?.previewFontFamily]);
+
+    // 设置里改过之后，下一次 payload 会带来新基线，临时值就该让位。
+    useEffect(() => { setFontOverride(null); }, [payload?.previewFontSize]);
+
+    const saveFontTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => {
+        const onWheel = (e: WheelEvent) => {
+            if (!e.ctrlKey) return;
+            e.preventDefault();
+            const base = fontOverride ?? payloadRef.current?.previewFontSize ?? DEFAULT_PREVIEW_FONT_SIZE;
+            const next = clampPreviewFontSize(base + (e.deltaY > 0 ? -1 : 1));
+            if (next === base) return;
+            setFontOverride(next);
+            if (saveFontTimerRef.current) clearTimeout(saveFontTimerRef.current);
+            saveFontTimerRef.current = setTimeout(() => {
+                invoke("save_setting", { key: "app.preview_font_size", value: String(next) })
+                    .then(() => emit("settings-changed"))
+                    .catch(() => { });
+            }, 400);
+        };
+        // 必须 passive:false，否则 preventDefault 无效、面板会跟着一起滚。
+        window.addEventListener("wheel", onWheel, { passive: false });
+        return () => window.removeEventListener("wheel", onWheel);
+    }, [fontOverride]);
+
+    // 渲染完成后上报窗口真实布局（诊断用）。
+    useEffect(() => {
+        if (!payload) return;
+        checkAndFixScale();
+        const raf = window.requestAnimationFrame(() => {
+            const el = document.querySelector<HTMLElement>(".preview-content");
+            previewDebugLog("layout after render", {
+                innerW: window.innerWidth,
+                innerH: window.innerHeight,
+                outerW: window.outerWidth,
+                outerH: window.outerHeight,
+                dpr: window.devicePixelRatio,
+                contentScrollH: el?.scrollHeight,
+                contentClientH: el?.clientHeight,
+                contentFontSize: el ? getComputedStyle(el).fontSize : null,
+                contentLineHeight: el ? getComputedStyle(el).lineHeight : null
+            });
+        });
+        return () => window.cancelAnimationFrame(raf);
+    }, [payload]);
+
+    // 主窗口在显示前会 setSize 到最终物理尺寸，这里借 resize 触发补偿。
+    useEffect(() => {
+        const onResize = () => { checkAndFixScale(); };
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
     }, []);
 
     useEffect(() => {
@@ -366,10 +460,6 @@ const CompactPreviewWindow = () => {
                     htmlContent={cleanHtml || payload.htmlContent}
                     fallbackText={payload.preview || payload.content}
                     preview={false}
-                    style={{
-                        fontSize: "var(--clipboard-item-font-size)",
-                        lineHeight: "22px"
-                    }}
                 />
             );
         }

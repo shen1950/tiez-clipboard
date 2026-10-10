@@ -302,8 +302,11 @@
   gap: 4px !important;
   position: absolute !important;
   top: 50% !important;
-  right: 40px !important;
+  right: 6px !important;
   transform: translateY(-50%) !important;
+  padding: 2px 4px !important;
+  border-radius: 8px !important;
+  background: var(--bg-element) !important;
   color: var(--text-secondary) !important;
   opacity: 0 !important;
   pointer-events: none !important;
@@ -317,9 +320,11 @@
   pointer-events: auto !important;
 }
 
-.themed-tag-manager .tag-item:hover .tag-name,
-.themed-tag-manager .tag-item.active .tag-name {
-  padding-right: 52px !important;
+/* 悬停时让操作按钮直接顶替计数徽章的位置，而不是从标签名里抠 52px：
+   抠宽度正是"不把侧栏拉开就永远看不全标签名"的根源。 */
+.themed-tag-manager .tag-item:hover .tag-badge,
+.themed-tag-manager .tag-item.active .tag-badge {
+  visibility: hidden !important;
 }
 
 .themed-tag-manager .tag-hover-actions > span {
@@ -412,7 +417,9 @@
   min-height: 48px !important;
   padding: 10px 14px !important;
   display: grid !important;
-  grid-template-columns: minmax(0, 1fr) auto !important;
+  /* 右轨用 auto 会先按 max-content 占位，把左轨（标签名）挤成 0 宽；
+     给它 min 0，窄窗口下两侧一起收缩，标签名才有机会显示出来。 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) !important;
   align-items: center !important;
   justify-content: stretch !important;
   gap: 10px !important;

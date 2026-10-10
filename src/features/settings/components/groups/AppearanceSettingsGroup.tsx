@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ComponentType, ReactNode, CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, message } from "@tauri-apps/plugin-dialog";
@@ -10,6 +11,7 @@ import {
 } from "../../../../shared/config/themes";
 import type { Locale } from "../../../../shared/types";
 import type { SettingsSubpage } from "../../../app/types";
+import { applySettingsFontFamily, applySettingsZoom } from "../../../../shared/hooks/useSettingsWindowFont";
 
 interface LabelWithHintProps {
     label: string;
@@ -92,6 +94,38 @@ const AppearanceSettingsGroup = ({
 }: AppearanceSettingsGroupProps) => {
     const showCustomBackgroundControls = supportsCustomBackground(theme);
     const showSurfaceOpacityControls = supportsSurfaceOpacity(theme);
+
+    // 预览字号/字体由预览窗自己在悬停时读库，设置窗字号/字体由本窗口自己应用，
+    // 所以这里只是编辑入口，自己拉一次当前值即可，不必挤进 AppState 的跨窗口链路。
+    const [previewFontSize, setPreviewFontSize] = useState(14);
+    const [previewFontFamily, setPreviewFontFamily] = useState("default");
+    const [settingsZoomPercent, setSettingsZoomPercent] = useState(100);
+    const [settingsFontFamily, setSettingsFontFamily] = useState("default");
+    useEffect(() => {
+        invoke<Record<string, string>>("get_settings")
+            .then((settings) => {
+                const size = parseInt(settings?.["app.preview_font_size"] || "", 10);
+                if (Number.isFinite(size)) setPreviewFontSize(size);
+                if (settings?.["app.preview_font_family"]) {
+                    setPreviewFontFamily(settings["app.preview_font_family"]);
+                }
+                const zoom = parseFloat(settings?.["app.settings_zoom"] || "");
+                if (Number.isFinite(zoom)) setSettingsZoomPercent(Math.round(zoom * 100));
+                if (settings?.["app.settings_font_family"]) {
+                    setSettingsFontFamily(settings["app.settings_font_family"]);
+                }
+            })
+            .catch(() => { });
+    }, []);
+
+    const fontFamilyOptions = [
+        { value: "default", label: t('font_follow_theme') || '跟随主题' },
+        { value: "sans", label: t('font_sans') || '无衬线（雅黑/系统）' },
+        { value: "serif", label: t('font_serif') || '衬线（Times/宋体）' },
+        { value: "songti", label: t('font_songti') || '宋体' },
+        { value: "kaiti", label: t('font_kaiti') || '楷体' },
+        { value: "mono", label: t('font_mono') || '等宽（代码）' },
+    ];
 
     return (
     <div className={`settings-group ${collapsed ? 'collapsed' : ''}`}>
@@ -277,6 +311,115 @@ const AppearanceSettingsGroup = ({
                         }}
                         style={buildRangeStyle(clipboardTagFontSize, 8, 14)}
                     />
+                </div>
+
+                <div className="setting-item column">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                        <LabelWithHint
+                            label={t('preview_font_size') || '预览字号'}
+                            hint={t('preview_font_size_hint') || '悬停预览面板正文的字号；在预览窗里按住 Ctrl 滚轮也能直接调'}
+                            hintKey="preview_font_size"
+                        />
+                        <span className="hint" style={{ fontSize: '10px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {previewFontSize}px
+                        </span>
+                    </div>
+                    <input
+                        type="range"
+                        min="11"
+                        max="28"
+                        step="1"
+                        value={previewFontSize}
+                        onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            setPreviewFontSize(val);
+                            saveAppSetting('preview_font_size', String(val));
+                        }}
+                        style={buildRangeStyle(previewFontSize, 11, 28)}
+                    />
+                </div>
+
+                <div className="setting-item column">
+                    <LabelWithHint
+                        label={t('preview_font_family') || '预览字体'}
+                        hint={t('preview_font_family_hint') || '悬停预览面板正文使用的字体'}
+                        hintKey="preview_font_family"
+                    />
+                    <select
+                        value={previewFontFamily}
+                        onChange={(e) => {
+                            setPreviewFontFamily(e.target.value);
+                            saveAppSetting('preview_font_family', e.target.value);
+                        }}
+                        style={{
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--input-bg)',
+                            color: 'var(--text-color)',
+                            fontSize: '14px'
+                        }}
+                    >
+                        {fontFamilyOptions.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="setting-item column">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                        <LabelWithHint
+                            label={t('settings_font_size') || '设置窗口字号'}
+                            hint={t('settings_font_size_hint') || '整窗一起缩放（含图标与间距），改完立刻生效'}
+                            hintKey="settings_font_size"
+                        />
+                        <span className="hint" style={{ fontSize: '10px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {settingsZoomPercent}%
+                        </span>
+                    </div>
+                    <input
+                        type="range"
+                        min="80"
+                        max="160"
+                        step="5"
+                        value={settingsZoomPercent}
+                        onChange={(e) => {
+                            const percent = parseInt(e.target.value);
+                            const zoom = percent / 100;
+                            setSettingsZoomPercent(percent);
+                            saveAppSetting('settings_zoom', String(zoom));
+                            applySettingsZoom(zoom);
+                        }}
+                        style={buildRangeStyle(settingsZoomPercent, 80, 160)}
+                    />
+                </div>
+
+                <div className="setting-item column">
+                    <LabelWithHint
+                        label={t('settings_font_family') || '设置窗口字体'}
+                        hint={t('settings_font_family_hint') || '设置窗口全部文字使用的字体'}
+                        hintKey="settings_font_family"
+                    />
+                    <select
+                        value={settingsFontFamily}
+                        onChange={(e) => {
+                            setSettingsFontFamily(e.target.value);
+                            saveAppSetting('settings_font_family', e.target.value);
+                            applySettingsFontFamily(e.target.value);
+                        }}
+                        style={{
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--input-bg)',
+                            color: 'var(--text-color)',
+                            fontSize: '14px'
+                        }}
+                    >
+                        {fontFamilyOptions.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                    </select>
                 </div>
 
                 {(showCustomBackgroundControls || showSurfaceOpacityControls) && (

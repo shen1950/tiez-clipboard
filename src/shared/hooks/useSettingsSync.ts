@@ -10,6 +10,7 @@ interface UseSettingsSyncOptions {
   captureRichText: boolean;
   fileTransferAutoCopy: boolean;
   fileServerAutoClose: boolean;
+  fileServerAutoCloseSeconds: string;
   fileTransferAutoOpen: boolean;
   persistent: boolean;
   soundVolume: number;
@@ -26,6 +27,7 @@ export const useSettingsSync = ({
   captureRichText,
   fileTransferAutoCopy,
   fileServerAutoClose,
+  fileServerAutoCloseSeconds,
   fileTransferAutoOpen,
   persistent,
   soundVolume,
@@ -63,6 +65,13 @@ export const useSettingsSync = ({
       invoke("set_file_server_auto_close", { enabled: fileServerAutoClose }).catch(console.error);
     }
   }, [fileServerAutoClose, settingsLoaded]);
+
+  useEffect(() => {
+    if (settingsLoaded) {
+      const seconds = Math.max(0, parseInt(fileServerAutoCloseSeconds, 10) || 0);
+      invoke("set_file_transfer_auto_close_seconds", { seconds }).catch(console.error);
+    }
+  }, [fileServerAutoCloseSeconds, settingsLoaded]);
 
   useEffect(() => {
     if (settingsLoaded) {

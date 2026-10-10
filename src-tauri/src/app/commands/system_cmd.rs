@@ -46,13 +46,40 @@ pub fn open_file_with_default_app(file_path: String) -> AppResult<()> {
 
 #[tauri::command]
 pub fn open_file_location(file_path: String) -> AppResult<()> {
-    use std::process::Command;
-    Command::new("explorer")
-        .arg("/select,")
-        .arg(&file_path)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))?;
-    Ok(())
+    let path = std::path::Path::new(file_path.trim());
+    if !path.exists() {
+        return Err(AppError::Validation("文件位置已不存在".to_string()));
+    }
+
+    // explorer 的 `/select,` 参数对引号与斜杠方向都很挑剔（路径带空格就会只打开目录
+    // 而不选中文件），直接给它一个 PIDL。
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{ILCreateFromPathW, SHOpenFolderAndSelectItems};
+
+    // 命令跑在 Tauri 的工作线程上，这条线程通常没初始化 COM，Shell 接口会直接
+    // 返回 0x800401F0（尚未调用 CoInitialize）。
+    let com_init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+
+    let wide: Vec<u16> = OsStr::new(path).encode_wide().chain(std::iter::once(0)).collect();
+    let pidl = unsafe { ILCreateFromPathW(PCWSTR(wide.as_ptr())) };
+    let result = if pidl.is_null() {
+        Err(AppError::Internal("无法解析文件位置".to_string()))
+    } else {
+        let opened = unsafe { SHOpenFolderAndSelectItems(pidl, None, 0) };
+        unsafe { CoTaskMemFree(Some(pidl as *const core::ffi::c_void)) };
+        opened.map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))
+    };
+    // 返回 S_FALSE 表示这条线程本来就初始化过 COM，计数同样需要配平；
+    // 失败（如 RPC_E_CHANGED_MODE）则不能调 CoUninitialize。
+    if com_init.ok().is_ok() {
+        unsafe { CoUninitialize() };
+    }
+    result
 }
 
 #[tauri::command]
@@ -761,4 +788,10 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
         }
     }
     Ok(())
+}
+
+/// 前端调试日志：写入 tiez.log，便于诊断预览窗口等仅发布版可见的问题。
+#[tauri::command]
+pub fn append_debug_log(line: String) {
+    crate::logger::log(&format!("[WEBVIEW] {}", line));
 }

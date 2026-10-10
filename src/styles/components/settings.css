@@ -165,6 +165,7 @@
   width: 18px;
   height: 18px;
   padding: 2px;
+  flex-shrink: 0;
   background: transparent;
   border: none;
   box-shadow: none !important;
@@ -187,12 +188,22 @@
   padding-right: 8px;
 }
 
+/* LabelWithHint 在组里又套了一层横向 flex；不给它 min-width:0，
+   整行会撑破 .item-label-group（它没有 overflow），标签文字于是被右边
+   半透明白的 select/输入框压住——就是"白色图层把字盖住"。 */
+.item-label-group>div {
+  min-width: 0;
+}
+
 .setting-item span.item-label {
   font-weight: 700;
   color: var(--text-primary);
   font-size: var(--font-size-md);
-  display: flex;
-  align-items: center;
+  /* text-overflow 在 display:flex 的元素上不生效，必须用块容器；
+     flex 项还要显式允许收缩，否则 nowrap 文本永远撑在原宽。 */
+  display: block;
+  min-width: 0;
+  flex: 0 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -431,7 +442,9 @@
 
 .advanced-workbench {
   display: grid;
-  grid-template-columns: var(--advanced-sidebar-width, 120px) 4px minmax(0, 1fr);
+  /* 左栏可拖，但轨道下限必须容得下搜索框（左右内边距 20 + 图标位 36）；
+     之前允许拖到 80px，搜索框里只剩约 12px，"搜索规则"被挤成一字一行。 */
+  grid-template-columns: minmax(150px, var(--advanced-sidebar-width, 180px)) 4px minmax(0, 1fr);
   grid-template-rows: 1fr !important;
   flex: 1 !important;
   min-height: 0 !important;
@@ -598,6 +611,10 @@
 .advanced-target-sub {
   font-size: 11px;
   color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .advanced-target-delete {

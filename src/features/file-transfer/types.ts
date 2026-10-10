@@ -2,6 +2,8 @@ export interface FileTransferChatViewProps {
   t: (key: string) => string;
   localIp: string;
   actualPort: string;
+  /** 嵌入设置窗口时为 true：不再抢焦点、不再动主窗口的键盘导航。 */
+  embedded?: boolean;
 }
 
 export type FileTransferMessageDirection = "in" | "out";
@@ -17,7 +19,6 @@ export interface FileTransferMessage {
   file_path?: string;
   _preparing?: boolean;
   _fileName?: string;
-  _fallbackSrc?: string;
 }
 
 export type FileTransferDragPayload = string[] | { paths: string[] };

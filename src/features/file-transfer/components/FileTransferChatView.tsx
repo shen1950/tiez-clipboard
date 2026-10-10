@@ -18,19 +18,18 @@ import {
     Send,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { QRCodeCanvas } from "qrcode.react";
 import type {
     FileTransferChatViewProps,
     FileTransferContextMenu,
-    FileTransferMessage,
-    FileTransferDevice
+    FileTransferMessage
 } from "../types";
 
 // File Transfer Chat View Component
 const FileTransferChatView = ({
     t,
     localIp,
-    actualPort
+    actualPort,
+    embedded = false
 }: FileTransferChatViewProps) => {
     const resolveComposerMetrics = () => {
         const controlHeight = 32;
@@ -53,8 +52,26 @@ const FileTransferChatView = ({
     const [showExpandBtn, setShowExpandBtn] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [contextMenu, setContextMenu] = useState<FileTransferContextMenu | null>(null);
-    const [onlineDevices, setOnlineDevices] = useState<FileTransferDevice[]>([]);
     const [isDragging, setIsDragging] = useState(false);
+    const [pasteStatus, setPasteStatus] = useState<string | null>(null);
+    const pasteStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const showPasteStatus = (msg: string) => {
+        if (pasteStatusTimerRef.current) clearTimeout(pasteStatusTimerRef.current);
+        setPasteStatus(msg);
+        pasteStatusTimerRef.current = setTimeout(() => setPasteStatus(null), 8000);
+    };
+    // 发布版没有 devtools：粘贴/发送链路的每一步都写进 tiez.log，
+    // 出问题时按 [CHAT] 关键字就能定位到是哪一步、哪个错误。
+    const chatLog = (stage: string, detail?: Record<string, unknown>) => {
+        invoke("append_debug_log", {
+            line: `[chat] ${stage}${detail ? " " + JSON.stringify(detail) : ""}`
+        }).catch(() => { });
+    };
+    const reportFailure = (stage: string, err: unknown) => {
+        chatLog(`${stage} failed`, { err: String(err) });
+        console.error(stage, err);
+        showPasteStatus(`${t('file_transfer_send_failed')}（${String(err)}）`);
+    };
     const lastDropSignatureRef = useRef("");
     const lastDropHandledAtRef = useRef(0);
     const chatViewStyle = {
@@ -130,12 +147,72 @@ const FileTransferChatView = ({
         return parts.length > 0 ? parts : text;
     };
 
+    // 收发双向的 m.content 含义不同：Rust 的 append_message 会把带路径的消息
+    // 改写成 /download/<token>?name=<文件名>，真实文件名只能从这里还原。
+    const decodeDownloadName = (content: string): string | null => {
+        if (!content || !content.startsWith("/download/")) return null;
+        const idx = content.indexOf("?name=");
+        if (idx < 0) return null;
+        try {
+            return decodeURIComponent(content.slice(idx + 6));
+        } catch {
+            return null;
+        }
+    };
+
+    const resolveMediaFileName = (m: FileTransferMessage): string => {
+        const fromUrl = decodeDownloadName(m.content);
+        if (fromUrl) return fromUrl;
+        if (m._fileName) return m._fileName;
+        const raw = m.file_path || m.content || "";
+        return raw.split(/[/\\]/).pop() || "File";
+    };
+
+    // 图片优先走 asset 协议：Rust 侧 append_message 已把路径放行进 scope，
+    // 文件服务关着也能显示；只有拿不到本地路径时才退回局域网下载链接。
+    const resolveMediaSrc = (m: FileTransferMessage): string => {
+        if (m.content.startsWith("data:")) return m.content;
+        if (m.file_path) return convertFileSrc(m.file_path);
+        if (m.content.startsWith("/download/") && localIp && actualPort) {
+            return `http://${localIp}:${actualPort}${m.content}`;
+        }
+        return m.content;
+    };
+
+    const progressNode = (
+        <div className="progress-wrapper">
+            <div className="progress-container">
+                <div className="progress-bar" style={{ width: '100%', animation: 'pulse 1.5s ease-in-out infinite' }}></div>
+            </div>
+            <div className="status-text">
+                <span className="status-label">Preparing...</span>
+                <span className="percent"></span>
+            </div>
+        </div>
+    );
+
+    // 发送中的占位消息没有真实 src，直接套图片模板会闪一下破图 + "Image"；
+    // 统一渲染成与文件卡片一致的“发送中”样式。
+    const renderPreparing = (m: FileTransferMessage) => (
+        <>
+            <div className="wt-file-card">
+                <div className="wt-file-icon">📤</div>
+                <div className="wt-file-info">
+                    <div className="wt-file-name">{m._fileName || 'File'}</div>
+                    <div style={{ fontSize: '10px', opacity: 0.7 }}>Preparing...</div>
+                </div>
+            </div>
+            {progressNode}
+        </>
+    );
+
     useEffect(() => {
+        if (embedded) return;
         invoke("set_navigation_enabled", { enabled: false }).catch(console.error);
         return () => {
             invoke("set_navigation_enabled", { enabled: true }).catch(console.error);
         };
-    }, []);
+    }, [embedded]);
 
     useEffect(() => {
         const handleCopy = (e: KeyboardEvent) => {
@@ -262,30 +339,7 @@ const FileTransferChatView = ({
             if (paths && paths.length > 0) {
                 lastDropSignatureRef.current = signature;
                 lastDropHandledAtRef.current = now;
-
-                const tempMessages: FileTransferMessage[] = [];
-                paths.forEach(path => {
-                    const fileName = path.split(/[/\\]/).pop() || 'File';
-                    tempMessages.push({
-                        id: Date.now() + Math.random(),
-                        direction: 'out',
-                        msg_type: 'file',
-                        content: 'Preparing...',
-                        timestamp: Date.now(),
-                        _fileName: fileName,
-                        _preparing: true
-                    });
-                });
-
-                if (tempMessages.length > 0) {
-                    setMessages(prev => [...prev, ...tempMessages]);
-                    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-                }
-
-                paths.forEach(path => {
-                    invoke("send_file_to_client", { filePath: path }).catch(console.error);
-                });
-                setTimeout(fetchMessages, 500);
+                sendPathsAsFiles(paths);
             }
         };
 
@@ -332,10 +386,6 @@ const FileTransferChatView = ({
 
         console.log("[DEBUG] All drag-drop listeners registered successfully");
 
-        const unlistenDevices = listen<FileTransferDevice[]>("online-devices-updated", (event) => {
-            setOnlineDevices(event.payload || []);
-        });
-
         const unlistenNewMsg = listen<FileTransferMessage>("new-chat-message", () => {
             fetchMessages();
         });
@@ -348,7 +398,6 @@ const FileTransferChatView = ({
             unlistenV2Drop.then(f => f());
             unlistenV2Enter.then(f => f());
             unlistenV2Leave.then(f => f());
-            unlistenDevices.then(f => f());
             unlistenNewMsg.then(f => f());
         };
     }, []);
@@ -431,31 +480,119 @@ const FileTransferChatView = ({
         }
     };
 
+    const isImagePath = (path: string) => /\.(png|jpe?g|gif|webp|bmp|svg|ico)$/i.test(path);
+    const isVideoPath = (path: string) => /\.(mp4|mkv|avi|mov|wmv|flv|webm)$/i.test(path);
+
+    // 批量发送本地文件：先插“准备中”占位消息，再逐个走 send_file_to_client。
+    const sendPathsAsFiles = (paths: string[]) => {
+        const valid = paths.filter(p => typeof p === 'string' && p.length > 0);
+        if (valid.length === 0) return;
+
+        const tempMessages: FileTransferMessage[] = valid.map(path => ({
+            id: Date.now() + Math.random(),
+            direction: 'out',
+            msg_type: isImagePath(path) ? 'image' : (isVideoPath(path) ? 'video' : 'file'),
+            content: 'Preparing...',
+            timestamp: Date.now(),
+            _fileName: path.split(/[/\\]/).pop() || 'File',
+            _preparing: true
+        }));
+        setMessages(prev => [...prev, ...tempMessages]);
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+        chatLog("send files", { count: valid.length, paths: valid });
+
+        valid.forEach(path => {
+            invoke("send_file_to_client", { filePath: path }).catch((err) => {
+                reportFailure("send_file_to_client", err);
+            });
+        });
+        setTimeout(fetchMessages, 500);
+    };
+
+    const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => resolve((ev.target?.result as string) || "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+
+    // 粘贴发送一张 PNG（base64）：占位消息 → 存临时文件 → 发送。
+    const sendImageBase64 = async (base64: string, fileName: string) => {
+        setMessages(prev => [...prev, {
+            id: Date.now() + Math.random(),
+            direction: 'out',
+            msg_type: 'image',
+            content: 'Preparing...',
+            timestamp: Date.now(),
+            _fileName: fileName,
+            _preparing: true
+        }]);
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+        chatLog("send pasted image", { fileName, base64Len: base64.length });
+        try {
+            const savedPath = await invoke<string>("save_temp_image", { base64Data: base64 });
+            chatLog("temp image saved", { savedPath });
+            await invoke("send_file_to_client", { filePath: savedPath });
+        } catch (err) {
+            reportFailure("send pasted image", err);
+        }
+        setTimeout(fetchMessages, 500);
+    };
+
+    // 输入框直接粘贴发送：
+    // 1) 资源管理器复制的文件 → Rust 读剪贴板拿真实路径，按文件发送；
+    //    （CF_HDROP 在 WebView 的 paste 事件里不可见，必须无条件先查 Rust 侧）
+    // 2) 截图/复制的图片 → 转 base64 存临时文件后发送；
+    // 3) WebView 拿不到 File 对象时，再从 Win32 剪贴板直接读位图兜底；
+    // 4) 纯文本粘贴不拦截。
     const handlePaste = async (e: React.ClipboardEvent) => {
-        if (e.clipboardData.files.length > 0) {
-            const files = Array.from(e.clipboardData.files);
-            const imageFiles = files.filter(f => f.type.startsWith('image/'));
+        const files = Array.from(e.clipboardData?.files || []);
+        let text = "";
+        try { text = e.clipboardData?.getData("text/plain") || ""; } catch { /* ignore */ }
+        if (files.length === 0 && text) return; // 纯文本粘贴，走默认输入
+        e.preventDefault();
+        chatLog("paste", {
+            webFiles: files.map(f => `${f.name || "?"}:${f.type || "unknown"}`),
+            textLen: text.length
+        });
 
-            if (imageFiles.length > 0) {
-                e.preventDefault();
+        try {
+            const paths = await invoke<string[]>("get_clipboard_file_paths");
+            chatLog("clipboard file paths", { count: paths?.length ?? 0, paths });
+            if (paths && paths.length > 0) {
+                sendPathsAsFiles(paths);
+                return;
+            }
+        } catch (err) {
+            chatLog("get_clipboard_file_paths failed", { err: String(err) });
+        }
 
-                for (const file of imageFiles) {
-                    const reader = new FileReader();
-                    reader.onload = async (ev) => {
-                        const base64 = ev.target?.result as string;
-                        if (base64) {
-                            try {
-                                const savedPath = await invoke<string>("save_temp_image", { base64Data: base64 });
-                                await invoke("send_file_to_client", { filePath: savedPath });
-                            } catch (err) {
-                                console.error("Failed to paste image", err);
-                            }
-                        }
-                    };
-                    reader.readAsDataURL(file);
+        const imageFiles = files.filter(f => f.type.startsWith('image/'));
+        if (imageFiles.length > 0) {
+            for (const file of imageFiles) {
+                try {
+                    const base64 = await readFileAsDataUrl(file);
+                    if (base64) await sendImageBase64(base64, file.name || "Image.png");
+                } catch (err) {
+                    reportFailure("read pasted image", err);
                 }
             }
+            return;
         }
+
+        // 没有文本、没有 File 对象：尝试 Win32 位图兜底（截图工具/特殊来源）。
+        try {
+            const base64 = await invoke<string | null>("get_clipboard_image_base64");
+            chatLog("clipboard bitmap probe", { hit: !!base64, len: base64?.length ?? 0 });
+            if (base64) {
+                await sendImageBase64(base64, "Clipboard.png");
+                return;
+            }
+        } catch (err) {
+            chatLog("get_clipboard_image_base64 failed", { err: String(err) });
+        }
+
+        showPasteStatus(t('file_transfer_paste_empty'));
     };
 
     // Close context menu on click outside
@@ -526,32 +663,6 @@ const FileTransferChatView = ({
                 )}
             </AnimatePresence>
 
-            {localIp && actualPort && (
-                <div className="wt-header">
-                    <div className="wt-info-panel">
-                        <div className="wt-qr-container">
-                            <QRCodeCanvas value={`http://${localIp}:${actualPort}`} size={64} />
-                        </div>
-                        <div className="wt-info-list" style={{ flex: 1 }}>
-                            <div className="wt-info-row">
-                                <span className="wt-info-label">LOCAL IP:</span>
-                                <span className="wt-info-value">{localIp}</span>
-                            </div>
-                            <div className="wt-info-row">
-                                <span className="wt-info-label">PORT:</span>
-                                <span className="wt-info-value">{actualPort}</span>
-                            </div>
-                            <div className="wt-info-row">
-                                <span className="wt-info-label">ONLINE:</span>
-                                <span className="wt-info-value" style={{ color: "var(--accent-color)" }}>
-                                    {onlineDevices.length} 个设备已连接
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             <div className="wt-chat-box" ref={chatBoxRef}>
                 {messages.length === 0 && (
                     <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '40px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
@@ -602,155 +713,129 @@ const FileTransferChatView = ({
                                     >{renderTextWithLinks(m.content)}</div>
                                 )}
                                 {m.msg_type === 'image' && (
-                                    <>
-                                        <img
-                                            src={
-                                                m.content.startsWith('data:') ? m.content :
-                                                    m.file_path ? convertFileSrc(m.file_path) :
-                                                        m.content.startsWith('/download/') ? (localIp && actualPort ? `http://${localIp}:${actualPort}${m.content}` : m.content) :
-                                                            convertFileSrc(m.content)
-                                            }
-                                            className="wt-img-preview"
-                                            loading="lazy"
-                                            style={{ cursor: 'pointer' }}
-                                            alt="Image"
-                                            onClick={async () => {
-                                                await invoke('open_content', {
-                                                    id: m.id,
-                                                    content: m.file_path || m.content,
-                                                    contentType: 'image'
-                                                });
-                                            }}
-                                            onError={(e) => {
-                                                const target = e.currentTarget;
-                                                const filePath = m.file_path || m.content;
-                                                if (!filePath || filePath.startsWith('data:') || target.getAttribute('data-tried-fallback') === 'true') return;
+                                    m._preparing ? renderPreparing(m) : (
+                                        <>
+                                            <img
+                                                src={resolveMediaSrc(m)}
+                                                className="wt-img-preview"
+                                                loading="lazy"
+                                                style={{ cursor: 'pointer' }}
+                                                alt={resolveMediaFileName(m)}
+                                                onClick={async () => {
+                                                    await invoke('open_content', {
+                                                        id: m.id,
+                                                        content: m.file_path || m.content,
+                                                        contentType: 'image'
+                                                    });
+                                                }}
+                                                onError={async (e) => {
+                                                    const target = e.currentTarget;
+                                                    const filePath = m.file_path || m.content;
+                                                    if (!filePath || filePath.startsWith('data:') || target.getAttribute('data-tried-fallback') === 'true') return;
 
-                                                target.setAttribute('data-tried-fallback', 'true');
-                                                // Try to get a server token URL as fallback
-                                                invoke<string>('get_download_url', { filePath }).then((url) => {
-                                                    if (url && localIp && actualPort) {
-                                                        const fullUrl = `http://${localIp}:${actualPort}${url}`;
-                                                        // Force react to re-render with new src or direct DOM manipulation?
-                                                        // Direct manipulation is faster for error handling
-                                                        target.src = fullUrl;
-                                                        // Also update message object to avoid flicker on rerender
-                                                        m._fallbackSrc = fullUrl;
-                                                    }
-                                                }).catch(err => console.error("Fallback image load failed", err));
-                                            }}
-                                            onContextMenu={(e) => {
-                                                e.preventDefault();
-                                                setContextMenu({
-                                                    x: e.clientX,
-                                                    y: e.clientY,
-                                                    // For received images, m.content is often the file path
-                                                    filePath: m.file_path || m.content,
-                                                    content: m.content,
-                                                    id: m.id,
-                                                    type: 'image'
-                                                });
-                                            }}
-                                        />
-                                        <div style={{ fontSize: '11px', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                                            <ImageIcon size={12} />
-                                            <span>Image</span>
-                                        </div>
-                                    </>
-                                )}
-                                {m.msg_type === 'video' && (
-                                    <>
-                                        <video
-                                            src={
-                                                m.file_path ? convertFileSrc(m.file_path) :
-                                                    m.content.startsWith('/download/') ? (localIp && actualPort ? `http://${localIp}:${actualPort}${m.content}` : m.content) :
-                                                        convertFileSrc(m.content)
-                                            }
-                                            className="wt-video-preview"
-                                            controls
-                                            style={{ maxWidth: '100%', borderRadius: '8px', maxHeight: '300px' }}
-                                            onContextMenu={(e) => {
-                                                e.preventDefault();
-                                                setContextMenu({
-                                                    x: e.clientX,
-                                                    y: e.clientY,
-                                                    // For received videos, m.content is often the file path
-                                                    filePath: m.file_path || m.content,
-                                                    content: m.content,
-                                                    id: m.id,
-                                                    type: 'video'
-                                                });
-                                            }}
-                                        />
-                                        <div style={{ fontSize: '11px', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                                            <Video size={12} />
-                                            <span>Video</span>
-                                        </div>
-                                    </>
-                                )}
-                                {(m.msg_type === 'file' || (m.msg_type !== 'text' && m.msg_type !== 'image' && m.msg_type !== 'video')) && (
-                                    <>
-                                        <div className="wt-file-card"
-                                            style={{ cursor: m.direction === 'in' && !m._preparing ? 'pointer' : 'default' }}
-                                            onClick={async () => {
-                                                if (m.direction === 'in' && !m._preparing) {
+                                                    target.setAttribute('data-tried-fallback', 'true');
+                                                    // asset 协议失败（例如文件在别的盘且未放行）时，
+                                                    // 退回本机 HTTP 服务；端口/ IP 现取，自动重启后可能已变。
                                                     try {
-                                                        const targetPath = m.file_path || m.content;
-                                                        await invoke('open_content', {
-                                                            id: m.id,
-                                                            content: targetPath,
-                                                            contentType: 'file'
-                                                        });
-                                                    } catch (e) {
-                                                        console.error("Failed to open file", e);
+                                                        const url = await invoke<string>('get_download_url', { filePath });
+                                                        const status = await invoke<{ port: number; ip: string }>('get_file_server_status');
+                                                        const ip = status?.ip || localIp;
+                                                        const port = status?.port || Number(actualPort);
+                                                        if (url && ip && port) target.src = `http://${ip}:${port}${url}`;
+                                                    } catch (err) {
+                                                        console.error("Fallback image load failed", err);
                                                     }
-                                                }
-                                            }}
-
-                                            onContextMenu={(e) => {
-                                                if (!m._preparing) {
+                                                }}
+                                                onContextMenu={(e) => {
                                                     e.preventDefault();
                                                     setContextMenu({
                                                         x: e.clientX,
                                                         y: e.clientY,
+                                                        // For received images, m.content is often the file path
                                                         filePath: m.file_path || m.content,
                                                         content: m.content,
                                                         id: m.id,
-                                                        type: 'file'
+                                                        type: 'image'
                                                     });
+                                                }}
+                                            />
+                                            <div style={{ fontSize: '11px', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                                                <ImageIcon size={12} style={{ flexShrink: 0 }} />
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {resolveMediaFileName(m)}
+                                                </span>
+                                            </div>
+                                        </>
+                                    )
+                                )}
+                                {m.msg_type === 'video' && (
+                                    m._preparing ? renderPreparing(m) : (
+                                        <>
+                                            <video
+                                                src={resolveMediaSrc(m)}
+                                                className="wt-video-preview"
+                                                controls
+                                                style={{ maxWidth: '100%', borderRadius: '8px', maxHeight: '300px' }}
+                                                onContextMenu={(e) => {
+                                                    e.preventDefault();
+                                                    setContextMenu({
+                                                        x: e.clientX,
+                                                        y: e.clientY,
+                                                        // For received videos, m.content is often the file path
+                                                        filePath: m.file_path || m.content,
+                                                        content: m.content,
+                                                        id: m.id,
+                                                        type: 'video'
+                                                    });
+                                                }}
+                                            />
+                                            <div style={{ fontSize: '11px', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                                                <Video size={12} style={{ flexShrink: 0 }} />
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {resolveMediaFileName(m)}
+                                                </span>
+                                            </div>
+                                        </>
+                                    )
+                                )}
+                                {(m.msg_type === 'file' || (m.msg_type !== 'text' && m.msg_type !== 'image' && m.msg_type !== 'video')) && (
+                                    m._preparing ? renderPreparing(m) : (
+                                        <div className="wt-file-card"
+                                            style={{ cursor: 'pointer' }}
+                                            onClick={async () => {
+                                                try {
+                                                    const targetPath = m.file_path || m.content;
+                                                    await invoke('open_content', {
+                                                        id: m.id,
+                                                        content: targetPath,
+                                                        contentType: 'file'
+                                                    });
+                                                } catch (e) {
+                                                    console.error("Failed to open file", e);
                                                 }
                                             }}
+
+                                            onContextMenu={(e) => {
+                                                e.preventDefault();
+                                                setContextMenu({
+                                                    x: e.clientX,
+                                                    y: e.clientY,
+                                                    filePath: m.file_path || m.content,
+                                                    content: m.content,
+                                                    id: m.id,
+                                                    type: 'file'
+                                                });
+                                            }}
                                         >
-                                            <div className="wt-file-icon">{m._preparing ? '📤' : (m.direction === 'in' ? '✅' : '📄')}</div>
+                                            <div className="wt-file-icon">{m.direction === 'in' ? '✅' : '📄'}</div>
                                             <div className="wt-file-info">
-                                                <div className="wt-file-name">
-                                                    {m._preparing
-                                                        ? m._fileName
-                                                        : (m.content.includes("name=")
-                                                            ? decodeURIComponent(m.content.split("name=")[1])
-                                                            : (m.direction === 'in' && m.content.includes('\\')
-                                                                ? m.content.split(/[/\\]/).pop()
-                                                                : "File Transfer"))}
+                                                <div className="wt-file-name">{resolveMediaFileName(m)}</div>
+                                                <div style={{ fontSize: '10px', opacity: 0.7 }}>
+                                                    {m.direction === 'in' ? 'Saved - Click to open' : 'Ready for download'}
                                                 </div>
-                                                {!m._preparing && (
-                                                    <div style={{ fontSize: '10px', opacity: 0.7 }}>
-                                                        {m.direction === 'in' ? 'Saved - Click to open' : 'Ready for download'}
-                                                    </div>
-                                                )}
                                             </div>
                                         </div>
-                                        {m._preparing && (
-                                            <div className="progress-wrapper">
-                                                <div className="progress-container">
-                                                    <div className="progress-bar" style={{ width: '100%', animation: 'pulse 1.5s ease-in-out infinite' }}></div>
-                                                </div>
-                                                <div className="status-text">
-                                                    <span className="status-label">Preparing...</span>
-                                                    <span className="percent"></span>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </>
+                                    )
                                 )}
                             </div>
                         </div>
@@ -758,6 +843,20 @@ const FileTransferChatView = ({
                 })}
                 <div ref={messagesEndRef} />
             </div>
+
+            {pasteStatus && (
+                <div style={{
+                    margin: '0 10px 4px',
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    background: 'rgba(220, 68, 68, 0.12)',
+                    border: '1px solid rgba(220, 68, 68, 0.35)',
+                    color: '#d64545',
+                    fontSize: '11px'
+                }}>
+                    {pasteStatus}
+                </div>
+            )}
 
             <div className="wt-footer">
                 <div className="wt-composer">
@@ -772,29 +871,7 @@ const FileTransferChatView = ({
 
                                 if (selected) {
                                     const paths = Array.isArray(selected) ? selected : [selected];
-                                    const tempMessages: FileTransferMessage[] = [];
-                                    paths.forEach(path => {
-                                        const fileName = path.split(/[/\\]/).pop() || 'File';
-                                        const tempId = Date.now() + Math.random();
-                                        tempMessages.push({
-                                            id: tempId,
-                                            direction: 'out',
-                                            msg_type: 'file',
-                                            content: 'Preparing...',
-                                            timestamp: Date.now(),
-                                            _fileName: fileName,
-                                            _preparing: true
-                                        });
-                                    });
-
-                                    setMessages(prev => [...prev, ...tempMessages]);
-                                    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-
-                                    const sendPromises = paths.map(path =>
-                                        invoke("send_file_to_client", { filePath: path })
-                                    );
-                                    await Promise.all(sendPromises);
-                                    setTimeout(fetchMessages, 300);
+                                    sendPathsAsFiles(paths);
                                 }
                             } catch (e) {
                                 console.error(e);
@@ -809,7 +886,7 @@ const FileTransferChatView = ({
                             ref={textareaRef}
                             className="wt-input"
                             value={input}
-                            onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
+                            onFocus={() => { if (!embedded) invoke("focus_clipboard_window").catch(console.error); }}
                             onChange={e => setInput(e.target.value)}
                             onKeyDown={handleKeyDown}
                             onPaste={handlePaste}
@@ -855,7 +932,7 @@ const FileTransferChatView = ({
 
                         <textarea
                             value={input}
-                            onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
+                            onFocus={() => { if (!embedded) invoke("focus_clipboard_window").catch(console.error); }}
                             onChange={e => setInput(e.target.value)}
                             placeholder="Type your message..."
                             className="wt-fullscreen-textarea"

@@ -292,6 +292,17 @@ pub fn set_file_server_auto_close(
 }
 
 #[tauri::command]
+pub fn set_file_transfer_auto_close_seconds(
+    db_state: State<'_, DbState>,
+    seconds: u64,
+) -> AppResult<()> {
+    db_state
+        .settings_repo
+        .set("file_transfer_auto_close_seconds", &seconds.to_string())
+        .map_err(AppError::from)
+}
+
+#[tauri::command]
 pub fn set_file_transfer_auto_open(db_state: State<'_, DbState>, enabled: bool) -> AppResult<()> {
     db_state
         .settings_repo

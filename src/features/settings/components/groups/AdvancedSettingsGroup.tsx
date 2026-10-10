@@ -202,7 +202,7 @@ const AdvancedSettingsGroup = ({
                 return;
             }
 
-            const nextWidth = Math.min(Math.max(event.clientX - bounds.left, 80), 280);
+            const nextWidth = Math.min(Math.max(event.clientX - bounds.left, 150), 280);
             setSidebarWidth(nextWidth);
         };
 

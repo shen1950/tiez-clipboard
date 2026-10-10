@@ -52,7 +52,11 @@ pub trait ClipboardRepository {
     ) -> Result<Vec<ClipboardEntry>, String>;
     fn search(&self, query: &str, limit: i32, tag_only: bool) -> Result<Vec<ClipboardEntry>, String>;
     fn delete(&self, id: i64, data_dir: Option<&std::path::Path>) -> Result<(), String>;
-    fn clear(&self, data_dir: Option<&std::path::Path>) -> Result<(), String>;
+    fn clear(
+        &self,
+        content_type: Option<&str>,
+        data_dir: Option<&std::path::Path>,
+    ) -> Result<(), String>;
     // Recycle bin (soft delete)
     fn soft_delete(&self, id: i64, deleted_at: i64) -> Result<(), String>;
     fn restore(&self, id: i64) -> Result<(), String>;
@@ -540,20 +544,26 @@ impl SqliteClipboardRepository {
         content_type: Option<&str>,
     ) -> Result<Option<i64>, String> {
         if content_type == Some("image") {
-            if let Some(hash) = calc_image_hash(content) {
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT id FROM clipboard_history \
+            // 动图不做像素哈希去重：第一帧哈希无法区分动图和它自己的静图缩略，
+            // 新捕获的 GIF/动图 WebP 会被并进旧的 PNG 记录（touch_old 会直接吞掉原文件条目）。
+            let is_animated =
+                crate::services::clipboard::animated_image_format_of_content(content).is_some();
+            if !is_animated {
+                if let Some(hash) = calc_image_hash(content) {
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT id FROM clipboard_history \
                      WHERE (content_type = 'image' AND content_hash = ?) OR content = ?",
-                    )
-                    .map_err(|e| e.to_string())?;
-                let mut rows = stmt
-                    .query(params![hash, content])
-                    .map_err(|e| e.to_string())?;
-                if let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                    return Ok(Some(row.get(0).map_err(|e| e.to_string())?));
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let mut rows = stmt
+                        .query(params![hash, content])
+                        .map_err(|e| e.to_string())?;
+                    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                        return Ok(Some(row.get(0).map_err(|e| e.to_string())?));
+                    }
+                    return Ok(None);
                 }
-                return Ok(None);
             }
         }
 
@@ -1267,20 +1277,25 @@ impl ClipboardRepository for SqliteClipboardRepository {
         self.delete_with_conn(&conn, id, data_dir)
     }
 
-    fn clear(&self, _data_dir: Option<&std::path::Path>) -> Result<(), String> {
+    fn clear(
+        &self,
+        content_type: Option<&str>,
+        _data_dir: Option<&std::path::Path>,
+    ) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let now = now_ms();
 
-        // Get IDs of unpinned items without tags.
+        // Get IDs of unpinned items without tags, optionally limited to one content type.
         let mut stmt = conn
             .prepare(
                 "SELECT id FROM clipboard_history
              WHERE is_pinned = 0
+               AND (?1 IS NULL OR content_type = ?1)
                AND NOT EXISTS (SELECT 1 FROM entry_tags WHERE entry_id = clipboard_history.id)",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |row| row.get::<_, i64>(0))
+            .query_map(params![content_type], |row| row.get::<_, i64>(0))
             .map_err(|e| e.to_string())?;
         let ids: Vec<i64> = rows.filter_map(Result::ok).collect();
 
@@ -1645,5 +1660,102 @@ mod fts_tests {
         repo.save(&text_entry("plain body", 1000), None).unwrap();
         let hits = repo.search("testapp", 50, false).unwrap();
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn clear_with_content_type_only_touches_that_type() {
+        let (_arc, repo) = setup_db();
+        let url = ClipboardEntry { content_type: "url".to_string(), ..text_entry("https://a.edu.cn", 1000) };
+        let code = ClipboardEntry { content_type: "code".to_string(), ..text_entry("fn main() {}", 1100) };
+        repo.save(&url, None).unwrap();
+        repo.save(&code, None).unwrap();
+        repo.save(&text_entry("plain note", 1200), None).unwrap();
+
+        repo.clear(Some("url"), None).unwrap();
+        let mut types: Vec<String> = repo
+            .get_history(50, 0, None)
+            .unwrap()
+            .iter()
+            .map(|e| e.content_type.clone())
+            .collect();
+        types.sort();
+        assert_eq!(types, vec!["code", "text"]);
+
+        // 不带类型时行为不变：清空其余全部记录。
+        repo.clear(None, None).unwrap();
+        assert!(repo.get_history(50, 0, None).unwrap().is_empty());
+    }
+
+    fn image_entry(path: &str, ts: i64) -> ClipboardEntry {
+        ClipboardEntry {
+            content_type: "image".to_string(),
+            content: path.to_string(),
+            preview: "[image]".to_string(),
+            is_external: true,
+            ..text_entry(path, ts)
+        }
+    }
+
+    /// 动图不能因为“第一帧像素哈希相同”被并进静图记录：touch_old 模式下那会把
+    /// 刚捕获的原文件条目整个吞掉，粘贴出来仍然是旧的静图 PNG。
+    #[test]
+    fn animated_image_is_not_deduped_by_first_frame_hash() {
+        let dir = std::env::temp_dir().join(format!("tiez_dedup_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // anim.gif 相当于原始动图，flat.png 相当于它被解码重编码后的静图缩略（同一帧像素）
+        let gif_path = dir.join("anim.gif");
+        let flat_path = dir.join("flat.png");
+        let twin_path = dir.join("twin.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([10, 20, 30, 255]))
+            .save(&gif_path)
+            .unwrap();
+        image::open(&gif_path)
+            .unwrap()
+            .save(&flat_path)
+            .unwrap();
+        std::fs::copy(&flat_path, &twin_path).unwrap();
+
+        let gif_content = gif_path.to_string_lossy().to_string();
+        let flat_content = flat_path.to_string_lossy().to_string();
+        assert_eq!(
+            calc_image_hash(&gif_content),
+            calc_image_hash(&flat_content),
+            "用例前提：动图与它的静图缩略第一帧哈希必须相同"
+        );
+
+        let (arc, repo) = setup_db();
+        let flat_id = repo
+            .save(&image_entry(&flat_content, 1000), None)
+            .unwrap();
+
+        let conn = arc.lock().unwrap();
+        // 动图不能按第一帧哈希撞上那条静图记录
+        assert_eq!(
+            repo.find_by_content_with_conn(&conn, &gif_content, Some("image"))
+                .unwrap(),
+            None,
+            "动图不得按第一帧哈希去重"
+        );
+        // 静图的去重行为不变：像素相同、文件名不同仍算同一条
+        assert_eq!(
+            repo.find_by_content_with_conn(&conn, &flat_content, Some("image"))
+                .unwrap(),
+            Some(flat_id)
+        );
+        assert_eq!(
+            repo.find_by_content_with_conn(
+                &conn,
+                &twin_path.to_string_lossy(),
+                Some("image")
+            )
+            .unwrap(),
+            Some(flat_id),
+            "静图仍应按像素哈希去重"
+        );
+        drop(conn);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
