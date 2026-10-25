@@ -134,6 +134,17 @@
 **原因**：原开关只有"删旧插新/不动"两态，删旧路径会连带丢掉用户标记；拆成三模式让"保留标记"成为显式可选项。搜索栏此前只读自动生成色，未读 `tag_colors` 保存值，造成同一标签三处颜色不一致。
 
 
+## 13. 数字快速粘贴下拉自动弹回「关闭」修复（2026-10-26，v1.0.7）
+
+**内容**：
+
+- 「数字快速粘贴」（`app.quick_paste_modifier`）下拉的 onChange 此前调用 `invoke("set_quick_paste_modifier", ...)`，但该命令从未在 Rust 端定义和注册（`main.rs` 的 invoke_handler 中无此命令），调用必然失败且被 `.catch(console.error)` 吞掉，选择从未写入数据库。
+- 复现链路：独立设置窗口的"实时同步"快照 effect 监听到 `quickPasteModifier` 变化，防抖 400ms 广播 `settings-changed`；设置窗口自己（和主窗口）随即从后端 `get_settings` 重载，`useSettingsPostInit` 用数据库里的旧值 `disabled` 覆盖本地状态——下拉立即弹回「关闭」，表现为"选哪个都自动变成关闭"。
+- 修复：改走现有 `save_setting` 命令（`settings_cmd.rs` 的 `app.quick_paste_modifier` 分支本就存在：归一化 + 更新 `SettingsState.quick_paste_modifier` 内存态 + 写库），与相邻的「粘贴后自动删除」「粘贴后置顶到第一条」等设置保存方式一致（`ClipboardSettingsGroup.tsx`）。
+
+**原因**：保存通道断裂——前端调用了一个不存在的命令，而设置窗口的跨窗口同步又把未持久化的本地状态冲掉。Rust 端 low-level 键盘钩子读取的是 `SettingsState.quick_paste_modifier`（`hooks/mod.rs`），走 `save_setting` 后内存态与持久层同时更新：选中的修饰键即时生效，重启后也保持。
+
+
 ## 已知限制与未完成项（发布时保留原样，未改动）
 
 1. **自动更新器仍指向上游**：updater endpoint 与签名公钥均为原作者的（`tiez.name666.top`）。本 fork 的构建收到更新提示时实际会拉到上游版本——升级即回到未改版代码。fork 用户建议在设置中关闭自动更新，或自行替换 endpoint。

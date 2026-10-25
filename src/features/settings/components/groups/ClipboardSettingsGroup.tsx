@@ -430,7 +430,7 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                             onChange={(e) => {
                                 const value = e.target.value as QuickPasteModifier;
                                 props.setQuickPasteModifier(value);
-                                invoke("set_quick_paste_modifier", { modifier: value }).catch(console.error);
+                                props.saveAppSetting('quick_paste_modifier', value);
                             }}
                             style={{
                                 padding: '4px 8px',
