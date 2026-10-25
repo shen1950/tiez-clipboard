@@ -15,11 +15,32 @@ use crate::app::setup;
 use crate::global_state::*;
 use std::sync::atomic::Ordering;
 
+/// 托盘「重启应用」给新进程带的接力参数：新进程先等这么久再起来，
+/// 让旧进程有机会把单实例互斥量释放掉。
+const RESTART_RELAY_ARG: &str = "--restart-after=";
+
+/// 新进程在构建 Tauri 应用之前先等一小会儿。
+///
+/// tauri-plugin-single-instance 的互斥量由活着的进程持有，旧进程没退干净时
+/// 新进程一初始化插件就被判成"第二实例"直接静默退出（连 setup 都不进）。
+/// 托盘重启传了这个参数就说明是接力，让新进程等旧进程退干净再起来。
+fn wait_for_restart_relay() {
+    let delay = std::env::args().find_map(|a| {
+        let rest = a.strip_prefix(RESTART_RELAY_ARG)?.to_string();
+        rest.parse::<u64>().ok()
+    });
+    if let Some(ms) = delay {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
 fn main() {
     // 显式安装 rustls 的 crypto provider，防止 rumqttc 因缺少 provider 而 panic
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let _ = dotenvy::dotenv();
+
+    wait_for_restart_relay();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -38,8 +59,24 @@ fn main() {
                 })
                 .build(),
         )
-        .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        // 只记住主窗口和设置窗口的位置大小。插件对任何没有存档的窗口都会调
+        // show()，所以隐藏创建的 compact-preview 第一次创建时就被弹到桌面上；
+        // VISIBLE 整个排除掉，否则退出时正好开着的窗口会在静默启动时自己弹出来。
+        // 这里是显式白名单：以后新增的窗口默认不被插件接管。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .with_filter(|label| label == "main" || label == "settings")
+                .build(),
+        )
+        // 已经有实例在跑时，把主窗口叫出来，而不是无声退出。
+        // 原来是空回调：第二次启动 exe 什么也不发生，用户只看到"启动不了"。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            crate::app::setup::show_main_window(app);
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),

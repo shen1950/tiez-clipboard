@@ -444,8 +444,22 @@ const App = () => {
   useEffect(() => {
     const unlisten = listen("clipboard-changed", () => fetchAllTags());
     const unlistenRemoved = listen("clipboard-removed", () => fetchAllTags());
-    return () => { unlisten.then((f) => f()); unlistenRemoved.then((f) => f()); };
+    // 标签新建/重命名/删除/改条目标签都发这个事件。之前只有删除走前端手动
+    // emit("clipboard-changed")，新建标签根本不发事件，搜索下拉里的标签列表
+    // 一直停在旧值，非得重启应用才刷新。
+    const unlistenTags = listen("tags-updated", () => fetchAllTags());
+    return () => {
+      unlisten.then((f) => f());
+      unlistenRemoved.then((f) => f());
+      unlistenTags.then((f) => f());
+    };
   }, [fetchAllTags]);
+
+  // 打开搜索下拉的瞬间再拉一次。事件是兜底，这里是保底：下拉里显示的标签
+  // 必须是此刻的真实值，不能因为漏了一个事件就给出旧列表。
+  useEffect(() => {
+    if (showTagFilter && searchIsFocused) fetchAllTags();
+  }, [showTagFilter, searchIsFocused, fetchAllTags]);
 
   const allTags = useMemo(() => {
     if (!effectiveShowTagManager && !showTagFilter && editingTagsId === null) return [];
@@ -844,7 +858,8 @@ const App = () => {
     pushToast,
     onOpenSettings: openSettingsWindow,
     setProcessingAiId,
-    setHistory
+    setHistory,
+    refreshHistory: () => fetchHistory(true)
   });
 
   /* 

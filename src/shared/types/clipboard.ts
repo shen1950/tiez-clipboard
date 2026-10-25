@@ -10,6 +10,8 @@ export interface ClipboardEntry {
   is_pinned: boolean;
   tags: string[];
   isInputting?: boolean;
+  /** 嘴替追问：AI 的补充提问文本，仅在输入状态下展示，不写库。 */
+  _aiQuestion?: string;
   questionCount?: number;
   use_count?: number;
   is_external?: boolean;

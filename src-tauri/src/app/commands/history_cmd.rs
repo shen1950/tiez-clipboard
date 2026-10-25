@@ -185,11 +185,17 @@ pub fn clear_clipboard_history(
     session: State<'_, SessionHistory>,
     app_data: State<'_, AppDataDir>,
     content_type: Option<String>,
+    keep_tagged: Option<bool>,
+    keep_pinned: Option<bool>,
 ) -> AppResult<()> {
+    // 默认保留置顶和带标签的条目（清空时不动它们）。
+    let keep_tagged = keep_tagged.unwrap_or(true);
+    let keep_pinned = keep_pinned.unwrap_or(true);
     {
         let mut session_items = session.inner().0.lock().unwrap();
         session_items.retain(|item| {
-            let preserved = item.is_pinned || !item.tags.is_empty();
+            let preserved =
+                (keep_pinned && item.is_pinned) || (keep_tagged && !item.tags.is_empty());
             let in_scope = match content_type.as_deref() {
                 Some(ct) => item.content_type == ct,
                 None => true,
@@ -200,7 +206,7 @@ pub fn clear_clipboard_history(
     let data_dir = app_data.0.lock().unwrap();
     state
         .repo
-        .clear(content_type.as_deref(), Some(&data_dir))
+        .clear(content_type.as_deref(), Some(&data_dir), keep_tagged, keep_pinned)
         .map_err(AppError::from)?;
     let _ = app_handle.emit("clipboard-changed", ());
     crate::services::cloud_sync::request_cloud_sync(app_handle);
@@ -255,6 +261,7 @@ pub fn get_all_tags_info(
 
 #[tauri::command]
 pub fn rename_tag_globally(
+    app_handle: AppHandle,
     state: State<'_, DbState>,
     session: State<'_, SessionHistory>,
     old_name: String,
@@ -276,11 +283,14 @@ pub fn rename_tag_globally(
     state
         .tag_repo
         .rename(&old_name, &new_name)
-        .map_err(AppError::from)
+        .map_err(AppError::from)?;
+    let _ = app_handle.emit("tags-updated", ());
+    Ok(())
 }
 
 #[tauri::command]
 pub fn delete_tag_from_all(
+    app_handle: AppHandle,
     state: State<'_, DbState>,
     session: State<'_, SessionHistory>,
     app_data: State<'_, AppDataDir>,
@@ -295,12 +305,16 @@ pub fn delete_tag_from_all(
     state
         .tag_repo
         .delete_globally(&tag_name, Some(&data_dir))
-        .map_err(AppError::from)
+        .map_err(AppError::from)?;
+    let _ = app_handle.emit("tags-updated", ());
+    Ok(())
 }
 
 #[tauri::command]
-pub fn create_new_tag(state: State<'_, DbState>, tag_name: String) -> AppResult<()> {
-    state.tag_repo.create(&tag_name).map_err(AppError::from)
+pub fn create_new_tag(app_handle: AppHandle, state: State<'_, DbState>, tag_name: String) -> AppResult<()> {
+    state.tag_repo.create(&tag_name).map_err(AppError::from)?;
+    let _ = app_handle.emit("tags-updated", ());
+    Ok(())
 }
 
 #[tauri::command]

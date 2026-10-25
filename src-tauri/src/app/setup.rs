@@ -530,7 +530,21 @@ fn setup_main_window(app: &App, s: &StartupSettings) {
     let args: Vec<String> = std::env::args().collect();
     let is_autostart =
         args.contains(&"--autostart".to_string()) || args.contains(&"--minimized".to_string());
-    if !is_autostart && !s.silent_start {
+    // 托盘「重启应用」拉起的新进程带 --restart：用户是主动点的重启，
+    // 应用回来就该看得见。裸 show() 不够——窗口抢不到焦点就会触发"失焦隐藏"
+    // 被收走，等于白重启。所以按托盘那套 show_main（显示 + 抢焦点）来。
+    let forced_show = args.contains(&"--restart".to_string());
+    if forced_show {
+        let handle = app.handle().clone();
+        std::thread::spawn(move || {
+            // 等窗口和 webview 真正就绪再叫它
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            let inner = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                show_main_window(&inner);
+            });
+        });
+    } else if !is_autostart && !s.silent_start {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
         }
@@ -1061,6 +1075,9 @@ static TRAY_CLICK_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Timestamp (ms) of the last tray DoubleClick; a double click is followed by
 /// a trailing Click(Up) that must not re-run the single-click action.
 static TRAY_LAST_DOUBLE_CLICK_MS: AtomicU64 = AtomicU64::new(0);
+/// How long a left single click waits before acting, so a second press can
+/// still arrive as a DoubleClick and cancel it.
+const TRAY_DOUBLE_CLICK_WAIT_MS: u64 = 250;
 
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
@@ -1076,6 +1093,41 @@ fn tray_action_setting(app: &AppHandle, key: &str, default: &str) -> String {
         .and_then(|db| db.settings_repo.get(key).ok().flatten())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| default.to_string())
+}
+
+/// 把主窗口叫到前面来。单实例插件检测到已有实例时调用：
+/// 第二次启动 exe 不该无声退出，用户至少该看见窗口。
+pub fn show_main_window(app: &AppHandle) {
+    info!(">>> [TRAY] second instance detected, showing main window");
+    run_tray_action(app, "show_main");
+}
+
+/// 托盘「重启应用」。
+///
+/// 不能用 `app.restart()`：它先 spawn 新进程再让自己退出，而
+/// tauri-plugin-single-instance 的互斥量此刻还握在旧进程手里，新进程一初始化插件
+/// 就被判成"第二实例"直接静默退出——应用消失且不再出现。日志里只剩一句
+/// restart requested，之后隔很久的 STARTUP 还是用户自己手动重开的那次。
+///
+/// 这里给新进程带上 --restart-after=，让它先等旧进程退干净、互斥量释放了再起来。
+fn restart_app(app: &AppHandle) {
+    info!(">>> [TRAY] restart requested");
+    match std::env::current_exe() {
+        Ok(exe) => {
+            let mut cmd = std::process::Command::new(exe);
+            cmd.arg(format!("{}1500", crate::RESTART_RELAY_ARG));
+            // 让新进程无视"静默启动"，直接显示主窗口，否则用户看不到应用回来
+            cmd.arg("--restart");
+            // 保留原有参数（比如静默启动的 --minimized）
+            cmd.args(std::env::args().skip(1));
+            match cmd.spawn() {
+                Ok(_) => info!(">>> [TRAY] restart: new instance spawned, old one is exiting"),
+                Err(e) => crate::error!(">>> [TRAY] restart: spawn failed: {}", e),
+            }
+        }
+        Err(e) => crate::error!(">>> [TRAY] restart: current_exe failed: {}", e),
+    }
+    app.exit(0);
 }
 
 /// Executes a tray action: show_main / toggle_main / open_settings / menu / none.
@@ -1099,15 +1151,165 @@ fn run_tray_action(app: &AppHandle, action: &str) {
     }
 }
 
+/// 本机走 `--no-bundle` 构建，从不产出 updater 制品，`latest.json` 那条路永远 404，
+/// 所以托盘的「检查更新」只比对 GitHub 最新 release 的 tag。
+const LATEST_RELEASE_URL: &str = "https://github.com/shen1950/tiez-clipboard/releases/latest";
+
+fn parse_version(raw: &str) -> [u64; 3] {
+    let mut out = [0u64; 3];
+    for (slot, part) in out
+        .iter_mut()
+        .zip(raw.trim().trim_start_matches('v').split('.'))
+    {
+        *slot = part
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+    }
+    out
+}
+
+fn latest_release_tag() -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(LATEST_RELEASE_URL)
+        .send()
+        .map_err(|e| format!("网络请求失败：{}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("发布页返回 HTTP {}", resp.status().as_u16()));
+    }
+    // GitHub 会把 /releases/latest 重定向到 /releases/tag/<tag>，最终 URL 就是版本号。
+    let final_url = resp.url().to_string();
+    match final_url.rsplit_once("/tag/") {
+        Some((_, tag)) if !tag.is_empty() => Ok(tag.to_string()),
+        _ => Err("没能从发布页解析出版本号".to_string()),
+    }
+}
+
+fn tray_check_update(app: &AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    use tauri_plugin_opener::OpenerExt;
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let current = app.package_info().version.to_string();
+        let latest = match latest_release_tag() {
+            Ok(tag) => tag,
+            Err(err) => {
+                app.dialog()
+                    .message(format!("检查更新失败：{}", err))
+                    .title("检查更新")
+                    .kind(MessageDialogKind::Warning)
+                    .show(|_| {});
+                return;
+            }
+        };
+
+        if parse_version(&latest) <= parse_version(&current) {
+            app.dialog()
+                .message(format!("当前已是最新版本 v{}", current))
+                .title("检查更新")
+                .show(|_| {});
+            return;
+        }
+
+        let opener = app.clone();
+        app.dialog()
+            .message(format!(
+                "发现新版本 {}（当前 v{}）\n是否打开发布页下载？",
+                latest, current
+            ))
+            .title("检查更新")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "打开发布页".to_string(),
+                "稍后".to_string(),
+            ))
+            .show(move |confirmed| {
+                if confirmed {
+                    let _ = opener.opener().open_url(LATEST_RELEASE_URL, None::<&str>);
+                }
+            });
+    });
+}
+
+fn tray_open_log(app: &AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    let log_path = crate::logger::path()
+        .or_else(|| {
+            app.try_state::<AppDataDir>()
+                .map(|dir| dir.0.lock().unwrap().join("tiez.log"))
+        });
+    let path = match log_path {
+        Some(path) => path,
+        None => {
+            app.dialog()
+                .message("还没找到日志文件。")
+                .title("查看日志")
+                .kind(MessageDialogKind::Warning)
+                .show(|_| {});
+            return;
+        }
+    };
+
+    if path.exists() {
+        if let Err(err) =
+            crate::app::commands::open_file_location(path.to_string_lossy().to_string())
+        {
+            app.dialog()
+                .message(format!("无法打开日志位置：{}", err))
+                .title("查看日志")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+        return;
+    }
+
+    let parent = path.parent().map(|p| p.to_path_buf());
+    match parent.filter(|p| p.exists()) {
+        Some(dir) => {
+            let _ = std::process::Command::new("explorer")
+                .arg(dir.to_string_lossy().to_string())
+                .spawn();
+        }
+        None => {
+            app.dialog()
+                .message(format!("日志文件还没生成：{}", path.display()))
+                .title("查看日志")
+                .kind(MessageDialogKind::Warning)
+                .show(|_| {});
+        }
+    }
+}
+
 fn setup_tray(app: &App, hide_tray: bool) {
-    use tauri::menu::{Menu, MenuItem};
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-    let show_i = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>).unwrap();
     let settings_i =
-        MenuItem::with_id(app, "open_settings", "打开设置", true, None::<&str>).unwrap();
-    let quit_i = MenuItem::with_id(app, "quit", "退出 TieZ-GuLing", true, None::<&str>).unwrap();
-    let menu = Menu::with_items(app, &[&show_i, &settings_i, &quit_i]).unwrap();
+        MenuItem::with_id(app, "open_settings", "偏好设置", true, None::<&str>).unwrap();
+    let update_i = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>).unwrap();
+    let log_i = MenuItem::with_id(app, "open_log", "查看日志", true, None::<&str>).unwrap();
+    let separator = PredefinedMenuItem::separator(app).unwrap();
+    let restart_i = MenuItem::with_id(app, "restart", "重启应用", true, None::<&str>).unwrap();
+    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>).unwrap();
+    let menu = Menu::with_items(
+        app,
+        &[
+            &settings_i,
+            &update_i,
+            &log_i,
+            &separator,
+            &restart_i,
+            &quit_i,
+        ],
+    )
+    .unwrap();
     let icon =
         tauri::image::Image::from_bytes(include_bytes!("../../icons/tray-icon.png")).unwrap();
 
@@ -1116,21 +1318,21 @@ fn setup_tray(app: &App, hide_tray: bool) {
         .tooltip("TieZ-GuLing")
         .show_menu_on_left_click(false)
         .menu(&menu)
-        .on_menu_event(|app, event| {
-            if event.id.as_ref() == "show" {
-                run_tray_action(app, "show_main");
-            } else if event.id.as_ref() == "open_settings" {
-                run_tray_action(app, "open_settings");
-            } else if event.id.as_ref() == "quit" {
-                app.exit(0);
-            }
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open_settings" => run_tray_action(app, "open_settings"),
+            "check_update" => tray_check_update(app),
+            "open_log" => tray_open_log(app),
+            "restart" => restart_app(app),
+            "quit" => app.exit(0),
+            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             let app = tray.app_handle();
             match &event {
-                // Distinguish single from double click: a double click also
-                // emits a regular click first, so a non-instant single-click
-                // action is deferred and cancelled by a DoubleClick event.
+                // Windows delivers the first click's Up *before* it decides the
+                // next press is a double click, so the single-click action has
+                // to wait the double-click window out or a double click would
+                // run both (main panel flashing before settings opens).
                 TrayIconEvent::Click {
                     button: MouseButton::Left,
                     button_state: MouseButtonState::Up,
@@ -1142,19 +1344,21 @@ fn setup_tray(app: &App, hide_tray: bool) {
                         return;
                     }
                     let action = tray_action_setting(app, "app.tray_left_click", "show_main");
-                    if action == "show_main" {
-                        // Keep the most common action instant, matching the
-                        // historical tray behavior.
-                        run_tray_action(app, &action);
+                    if action == "none" || action == "menu" {
                         return;
                     }
-                    if action == "none" || action == "menu" {
+                    let double_action =
+                        tray_action_setting(app, "app.tray_left_double_click", "open_settings");
+                    if double_action == "none" {
+                        run_tray_action(app, &action);
                         return;
                     }
                     let generation = TRAY_CLICK_GENERATION.load(Ordering::SeqCst);
                     let app = app.clone();
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            TRAY_DOUBLE_CLICK_WAIT_MS,
+                        ));
                         if TRAY_CLICK_GENERATION.load(Ordering::SeqCst) == generation {
                             run_tray_action(&app, &action);
                         }

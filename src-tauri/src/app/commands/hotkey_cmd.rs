@@ -1,9 +1,32 @@
 use crate::app_state::SettingsState;
 use crate::error::{AppError, AppResult};
-use crate::global_state::HOTKEY_STRING;
+use crate::global_state::{HOTKEY_STRING, IS_RECORDING};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+fn uses_win_modifier(hotkey: &str) -> bool {
+    hotkey.split('+').any(|part| {
+        matches!(
+            part.trim().to_ascii_uppercase().as_str(),
+            "WIN" | "SUPER" | "COMMAND" | "META"
+        )
+    })
+}
+
+fn is_configured_hotkey(settings: &SettingsState, normalized: &str) -> bool {
+    [
+        &settings.main_hotkey,
+        &settings.sequential_paste_hotkey,
+        &settings.rich_paste_hotkey,
+        &settings.search_hotkey,
+    ]
+    .iter()
+    .any(|slot| {
+        let value = slot.lock().unwrap();
+        !value.is_empty() && value.replace("Win", "Super") == normalized
+    })
+}
 
 fn register_shortcut(app_handle: &AppHandle, hotkey: &str) {
     if hotkey.is_empty()
@@ -15,7 +38,9 @@ fn register_shortcut(app_handle: &AppHandle, hotkey: &str) {
 
     let normalized = hotkey.replace("Win", "Super");
     if let Ok(shortcut) = normalized.parse::<Shortcut>() {
-        let _ = app_handle.global_shortcut().register(shortcut);
+        if let Err(err) = app_handle.global_shortcut().register(shortcut) {
+            eprintln!("[HOTKEY] failed to register {}: {:?}", hotkey, err);
+        }
     }
 }
 
@@ -72,6 +97,19 @@ pub fn test_hotkey_available(app_handle: AppHandle, hotkey: String) -> AppResult
     let shortcut = normalized
         .parse::<Shortcut>()
         .map_err(|_| AppError::Validation("快捷键格式无效".to_string()))?;
+
+    // Recording mode registers every Win+key itself to block the shell, so
+    // probing those combos would report our own block as a conflict.
+    if IS_RECORDING.load(Ordering::SeqCst) && uses_win_modifier(&hotkey) {
+        return Ok(true);
+    }
+
+    // Re-recording an existing TieZ shortcut is not a third-party conflict.
+    if let Some(settings) = app_handle.try_state::<SettingsState>() {
+        if is_configured_hotkey(&settings, &normalized) {
+            return Ok(true);
+        }
+    }
 
     match app_handle.global_shortcut().register(shortcut.clone()) {
         Ok(_) => {

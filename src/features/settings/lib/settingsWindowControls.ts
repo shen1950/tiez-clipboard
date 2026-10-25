@@ -110,8 +110,9 @@ export const openSettingsWindow = async (options?: { chat?: boolean }): Promise<
                 skipTaskbar: false,
                 alwaysOnTop: false,
                 center: true,
-                // Created hidden; force_window_foreground shows it in one step
-                // so it never flashes on top and then sinks behind the desktop.
+                // 先隐藏创建，等 tauri://created 之后由下面的
+                // show + setFocus + force_window_foreground 三连一次性显示，
+                // 避免先弹出来再沉到桌面底下。
                 visible: false,
                 focus: true,
                 dragDropEnabled: true
@@ -125,6 +126,12 @@ export const openSettingsWindow = async (options?: { chat?: boolean }): Promise<
                     resolve();
                 });
             });
+            // 创建分支必须自己负责可见性。以前是 window-state 插件在窗口创建瞬间
+            // 因为存档里 visible:true 顺手 show()+set_focus() 兜住的，那个副作用
+            // 已经按上游 a5fa05a 关掉了（否则隐藏的预览窗会被弹到桌面上），
+            // 所以这里显式补上，与"窗口已存在"那条分支保持对称。
+            await win.show().catch(() => { });
+            await win.setFocus().catch(() => { });
             await forceSettingsForeground();
             await notifyChat();
         } catch (err) {

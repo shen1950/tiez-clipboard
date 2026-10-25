@@ -449,33 +449,48 @@ pub async fn call_ai(
             ai_response.replace('\n', " ")
         };
 
-        // Update database only if persistence is enabled
-        if persistent {
-            state
-                .repo
-                .update_entry_content(id, &ai_response, &preview)
-                .map_err(|e| format!("Database update failed: {}", e))?;
+        // 嘴替的追问标记：交给前端进入“补充信息”交互，不生成新条目。
+        if ai_response.trim_start().starts_with("[[QUESTION:") {
+            return Ok(ai_response);
         }
 
-        // Sync Session History and Emit Update
-        use crate::app_state::SessionHistory;
-        if let Some(session) = app_handle.try_state::<SessionHistory>() {
-            let mut history = session.0.lock().unwrap();
-            if let Some(item) = history.iter_mut().find(|i| i.id == id) {
-                item.content = ai_response.clone();
-                item.preview = preview.clone();
-                // Clear rich text so AI result is shown
-                if item.content_type == "rich_text" {
-                    item.content_type = "text".to_string();
-                    item.html_content = None;
-                }
-                // Emit update event from session item
-                let _ = app_handle.emit("clipboard-updated", item.clone());
-            } else if persistent {
-                // If persistent and not in session, fetch from DB to emit
-                if let Ok(Some(updated_entry)) = state.repo.get_entry_by_id(id) {
-                    let _ = app_handle.emit("clipboard-updated", updated_entry);
-                }
+        // AI 结果生成一条新记录，原条目保持不变（用户可在历史里回看原文）。
+        let new_entry = crate::database::ClipboardEntry {
+            id: 0,
+            content_type: "text".to_string(),
+            content: ai_response.clone(),
+            html_content: None,
+            source_app: "TieZ AI".to_string(),
+            source_app_path: None,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            preview: preview.clone(),
+            is_pinned: false,
+            tags: Vec::new(),
+            use_count: 0,
+            is_external: false,
+            pinned_order: 0,
+            deleted_at: None,
+            file_preview_exists: true,
+        };
+
+        if persistent {
+            let app_data_dir = app_handle.state::<crate::app_state::AppDataDir>();
+            let data_dir = app_data_dir.0.lock().unwrap().clone();
+            state
+                .repo
+                .save(&new_entry, Some(&data_dir))
+                .map_err(|e| format!("Database insert failed: {}", e))?;
+            let _ = app_handle.emit("clipboard-changed", ());
+            crate::services::cloud_sync::request_cloud_sync(app_handle);
+        } else {
+            // 非持久化模式：结果只进会话历史，不落库。
+            use crate::app_state::SessionHistory;
+            if let Some(session) = app_handle.try_state::<SessionHistory>() {
+                let mut session_entry = new_entry.clone();
+                session_entry.id = chrono::Utc::now().timestamp_millis();
+                let mut history = session.0.lock().unwrap();
+                history.insert(0, session_entry);
+                let _ = app_handle.emit("clipboard-changed", ());
             }
         }
 

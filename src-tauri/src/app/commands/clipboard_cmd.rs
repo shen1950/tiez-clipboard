@@ -96,6 +96,7 @@ pub fn update_tags(
 
             session_items[index].id = new_id;
             session_items[index].tags = tags;
+            let _ = app_handle.emit("tags-updated", ());
             crate::services::cloud_sync::request_cloud_sync(app_handle);
             return Ok(new_id);
         }
@@ -132,6 +133,7 @@ pub fn update_tags(
         };
         queue.0.enqueue(EncryptionJob { id, action });
     }
+    let _ = app_handle.emit("tags-updated", ());
     crate::services::cloud_sync::request_cloud_sync(app_handle);
     Ok(id)
 }

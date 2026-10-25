@@ -115,6 +115,10 @@ header {
   flex-direction: column;
   gap: 1px;
   box-sizing: border-box;
+  /* 兜底：窗口再窄也不许把菜单撑出可视区，超出部分自己滚。 */
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
 
 .header-menu-label {
@@ -124,6 +128,32 @@ header {
   letter-spacing: 0.04em;
   color: var(--text-secondary);
   opacity: 0.72;
+}
+
+.header-menu-keep {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 1px 8px 4px;
+}
+
+.header-menu-keep-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  opacity: 0.72;
+}
+
+.header-menu-keep-opts {
+  display: flex;
+  gap: 6px;
+}
+
+.header-menu-keep-opts .header-menu-item {
+  flex: 1;
+  justify-content: center;
+  padding: 4px 8px;
 }
 
 .header-menu-item {

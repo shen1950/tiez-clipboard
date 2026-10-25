@@ -56,6 +56,8 @@ pub trait ClipboardRepository {
         &self,
         content_type: Option<&str>,
         data_dir: Option<&std::path::Path>,
+        keep_tagged: bool,
+        keep_pinned: bool,
     ) -> Result<(), String>;
     // Recycle bin (soft delete)
     fn soft_delete(&self, id: i64, deleted_at: i64) -> Result<(), String>;
@@ -1281,21 +1283,26 @@ impl ClipboardRepository for SqliteClipboardRepository {
         &self,
         content_type: Option<&str>,
         _data_dir: Option<&std::path::Path>,
+        keep_tagged: bool,
+        keep_pinned: bool,
     ) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let now = now_ms();
 
-        // Get IDs of unpinned items without tags, optionally limited to one content type.
+        // Optionally limited to one content type.
+        // keep_tagged / keep_pinned: 清空时保留打标签 / 置顶的条目。
         let mut stmt = conn
             .prepare(
                 "SELECT id FROM clipboard_history
-             WHERE is_pinned = 0
-               AND (?1 IS NULL OR content_type = ?1)
-               AND NOT EXISTS (SELECT 1 FROM entry_tags WHERE entry_id = clipboard_history.id)",
+             WHERE (?1 IS NULL OR content_type = ?1)
+               AND (?2 = 0 OR is_pinned = 0)
+               AND (?3 = 0 OR NOT EXISTS (SELECT 1 FROM entry_tags WHERE entry_id = clipboard_history.id))",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![content_type], |row| row.get::<_, i64>(0))
+            .query_map(params![content_type, keep_pinned as i64, keep_tagged as i64], |row| {
+                row.get::<_, i64>(0)
+            })
             .map_err(|e| e.to_string())?;
         let ids: Vec<i64> = rows.filter_map(Result::ok).collect();
 
@@ -1671,7 +1678,7 @@ mod fts_tests {
         repo.save(&code, None).unwrap();
         repo.save(&text_entry("plain note", 1200), None).unwrap();
 
-        repo.clear(Some("url"), None).unwrap();
+        repo.clear(Some("url"), None, true, true).unwrap();
         let mut types: Vec<String> = repo
             .get_history(50, 0, None)
             .unwrap()
@@ -1682,7 +1689,53 @@ mod fts_tests {
         assert_eq!(types, vec!["code", "text"]);
 
         // 不带类型时行为不变：清空其余全部记录。
-        repo.clear(None, None).unwrap();
+        repo.clear(None, None, true, true).unwrap();
+        assert!(repo.get_history(50, 0, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_keep_pinned_option_controls_pinned_survival() {
+        let (_arc, repo) = setup_db();
+        let mut pinned = text_entry("pinned note", 1000);
+        pinned.is_pinned = true;
+        repo.save(&pinned, None).unwrap();
+        repo.save(&text_entry("plain note", 1100), None).unwrap();
+
+        // keep_pinned = true（默认）：置顶的保留。
+        repo.clear(None, None, true, true).unwrap();
+        let remaining: Vec<String> = repo
+            .get_history(50, 0, None)
+            .unwrap()
+            .iter()
+            .map(|e| e.content.clone())
+            .collect();
+        assert_eq!(remaining, vec!["pinned note".to_string()]);
+
+        // keep_pinned = false：置顶的也一起清空。
+        repo.clear(None, None, true, false).unwrap();
+        assert!(repo.get_history(50, 0, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_keep_tagged_option_controls_tagged_survival() {
+        let (_arc, repo) = setup_db();
+        let mut tagged = text_entry("tagged note", 1000);
+        tagged.tags = vec!["本科".to_string()];
+        repo.save(&tagged, None).unwrap();
+        repo.save(&text_entry("plain note", 1100), None).unwrap();
+
+        // keep_tagged = true（默认）：带标签的条目保留，未打标签的被清空。
+        repo.clear(None, None, true, true).unwrap();
+        let remaining: Vec<String> = repo
+            .get_history(50, 0, None)
+            .unwrap()
+            .iter()
+            .map(|e| e.content.clone())
+            .collect();
+        assert_eq!(remaining, vec!["tagged note".to_string()]);
+
+        // keep_tagged = false：带标签的也一起清空。
+        repo.clear(None, None, false, true).unwrap();
         assert!(repo.get_history(50, 0, None).unwrap().is_empty());
     }
 

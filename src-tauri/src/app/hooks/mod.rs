@@ -137,6 +137,9 @@ pub fn set_recording_mode(app_handle: AppHandle, enabled: bool) -> Result<(), St
                 println!("Recording mode OFF: Released blocked hotkeys");
             }
         }
+        // register_hotkey runs while the Win+ block is still active and cannot
+        // register the new shortcut. Re-sync once the block is released.
+        let _ = crate::app::commands::hotkey_cmd::sync_registered_hotkeys(&app_handle);
     }
 
     Ok(())

@@ -49,15 +49,33 @@ export const useAppActions = ({
     [mqttEnabled]
   );
 
-  const clearHistory = useCallback((contentType?: string | null, typeLabel?: string | null) => {
+  const clearHistory = useCallback((
+    contentType?: string | null,
+    typeLabel?: string | null,
+    keepTagged = true,
+    keepPinned = true
+  ) => {
+    // 保留提示按当前勾选状态动态生成。
+    const keepSentence = keepPinned && keepTagged
+      ? t("clear_keep_both")
+      : keepPinned
+        ? t("clear_keep_pinned_only")
+        : keepTagged
+          ? t("clear_keep_tagged_only")
+          : t("clear_keep_none");
+    const baseMessage = contentType
+      ? t("clear_confirm_message_type").replace("{type}", typeLabel || contentType)
+      : t("clear_confirm_message");
     openConfirm({
       title: contentType ? t("clear_confirm_title_type").replace("{type}", typeLabel || contentType) : t("clear_confirm_title"),
-      message: contentType
-        ? t("clear_confirm_message_type").replace("{type}", typeLabel || contentType)
-        : t("clear_confirm_message"),
+      message: `${baseMessage}${keepSentence}`,
       onConfirm: async () => {
         try {
-          await invoke("clear_clipboard_history", { contentType: contentType ?? null });
+          await invoke("clear_clipboard_history", {
+            contentType: contentType ?? null,
+            keepTagged,
+            keepPinned
+          });
           fetchHistory(true);
         } catch (err) {
           console.error("清空失败", err);

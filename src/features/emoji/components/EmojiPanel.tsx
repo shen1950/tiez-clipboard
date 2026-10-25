@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Plus, X } from "lucide-react";
+import { Clipboard, Plus, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface EmojiPanelProps {
@@ -176,8 +176,13 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [emojiGroups, setEmojiGroups] = useState<EmojiGroup[]>(FALLBACK_GROUPS);
   const [brokenFavorites, setBrokenFavorites] = useState<ReadonlySet<string>>(() => new Set());
+  const [clipboardBusy, setClipboardBusy] = useState(false);
+  const [clipboardHint, setClipboardHint] = useState("");
+  const favContainerRef = useRef<HTMLDivElement | null>(null);
+  const hintTimerRef = useRef<number | null>(null);
 
   const flatEmoji = useMemo(() => emojiGroups.flatMap((g) => g.emojis), [emojiGroups]);
+  const displayFavorites = useMemo(() => [...favorites].reverse(), [favorites]);
   const hasFavorites = favorites.length > 0;
 
   const persistFavorites = (updater: string[] | ((prev: string[]) => string[])) => {
@@ -316,6 +321,77 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
       persistFavorites((prev) => Array.from(new Set([...prev, ...valid])));
     }
   };
+
+  const flashClipboardHint = useCallback((text: string) => {
+    setClipboardHint(text);
+    if (hintTimerRef.current !== null) {
+      window.clearTimeout(hintTimerRef.current);
+    }
+    hintTimerRef.current = window.setTimeout(() => {
+      hintTimerRef.current = null;
+      setClipboardHint("");
+    }, 2600);
+  }, []);
+
+  const addFavoriteFromClipboard = useCallback(
+    async (files?: File[]) => {
+      if (clipboardBusy) return;
+      setClipboardBusy(true);
+      try {
+        if (files && files.length > 0) {
+          await addFavoriteFiles(files);
+          flashClipboardHint(t("emoji_clipboard_added") || "已从剪贴板添加");
+        } else {
+          const base64 = await invoke<string | null>("get_clipboard_image_base64");
+          if (!base64) {
+            flashClipboardHint(t("emoji_clipboard_empty") || "剪贴板里没有图片");
+            return;
+          }
+          const saved = await invoke<string>("save_emoji_favorite_data_url", {
+            dataUrl: `data:image/png;base64,${base64}`,
+            fileName: "clipboard.png"
+          });
+          if (typeof saved === "string" && saved.length > 0) {
+            persistFavorites((prev) => Array.from(new Set([...prev, saved])));
+            flashClipboardHint(t("emoji_clipboard_added") || "已从剪贴板添加");
+          } else {
+            flashClipboardHint(t("emoji_clipboard_empty") || "剪贴板里没有图片");
+          }
+        }
+        favContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (e) {
+        console.warn("Failed to add emoji from clipboard:", e);
+        flashClipboardHint(t("emoji_clipboard_empty") || "剪贴板里没有图片");
+      } finally {
+        setClipboardBusy(false);
+      }
+    },
+    [clipboardBusy, flashClipboardHint, t]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (hintTimerRef.current !== null) {
+        window.clearTimeout(hintTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "favorites") return;
+
+    const handlePaste = (event: ClipboardEvent) => {
+      event.preventDefault();
+      const fileList = event.clipboardData?.files;
+      const imageFiles = fileList
+        ? Array.from(fileList).filter(isImageFile)
+        : [];
+      void addFavoriteFromClipboard(imageFiles.length > 0 ? imageFiles : undefined);
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [activeTab, addFavoriteFromClipboard]);
 
   const handleSend = async (content: string, contentType: string) => {
     if (contentType === "text") {
@@ -570,6 +646,7 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
           ) : (
             <motion.div
               key="favorites"
+              ref={favContainerRef}
               className="emoji-fav-container"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -594,8 +671,44 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
                 void handleDomDrop(e);
               }}
             >
+              <div className="emoji-fav-actions">
+                <button
+                  className="emoji-fav-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void addFavoriteFromClipboard();
+                  }}
+                  disabled={clipboardBusy}
+                >
+                  <Clipboard size={14} />
+                  <span>{clipboardBusy ? "…" : t("emoji_add_from_clipboard") || "从剪贴板添加"}</span>
+                </button>
+                <span className="emoji-fav-action-hint">
+                  {clipboardHint || t("emoji_paste_hint") || "也可按 Ctrl+V 粘贴图片"}
+                </span>
+              </div>
+
               <div className="emoji-fav-grid">
-                {favorites.map((path, idx) => {
+                <motion.div
+                  className="emoji-fav-card emoji-fav-add"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <button
+                    className="emoji-fav-add-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleSelectFiles();
+                    }}
+                    title={t("emoji_add_files") || "添加表情"}
+                  >
+                    <div className="add-icon-wrapper">
+                      <Plus size={22} strokeWidth={2.5} />
+                    </div>
+                  </button>
+                </motion.div>
+
+                {displayFavorites.map((path, idx) => {
                   const name = path.split(/[/\\]/).pop() || path;
                   const isDeleteVisible = deleteTarget === path;
                   return (
@@ -648,24 +761,6 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
                   );
                 })}
 
-                <motion.div 
-                  className="emoji-fav-card emoji-fav-add"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <button
-                    className="emoji-fav-add-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleSelectFiles();
-                    }}
-                    title={t("emoji_add_files") || "添加表情"}
-                  >
-                    <div className="add-icon-wrapper">
-                      <Plus size={22} strokeWidth={2.5} />
-                    </div>
-                  </button>
-                </motion.div>
               </div>
 
               {!hasFavorites && (

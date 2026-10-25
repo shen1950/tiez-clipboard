@@ -152,12 +152,20 @@ let compactPreviewLifecycleListenersReady: Promise<void> | null = null;
 const previewSideLatch = new Map<string, boolean>();
 // 最近一次摆放的面板矩形（物理 px）：隐藏定时器触发时用它判断鼠标是否悬停在面板上，
 // 不依赖预览窗口自己的鼠标事件是否送达。
-let previewPanelRectPhysical: { left: number; top: number; width: number; height: number } | null = null;
-// 离开卡片后的隐藏缓冲：卡片间移动时先不收起，进入新卡片会取消（KwikPaste 240ms）。
+let previewPanelRectPhysical: PreviewRectPhysical | null = null;
+// 主窗口矩形：面板显示期间光标只要还在主窗口里，就交给卡片自己的 mouseleave 处理，
+// 避免在列表上阅读时被兜底定时器把面板收掉。
+let previewMainRectPhysical: PreviewRectPhysical | null = null;
+// 收起缓冲，同时也是兜底轮询的间隔：面板显示期间每这么久量一次光标。
 const PREVIEW_HIDE_BUFFER_MS = 500;
 let previewHideTimer: ReturnType<typeof setTimeout> | null = null;
 
+type PreviewRectPhysical = { left: number; top: number; width: number; height: number };
+
 const loadWebviewWindowModule = async () => import("@tauri-apps/api/webviewWindow");
+
+const isCursorInside = (rect: PreviewRectPhysical | null, x: number, y: number) =>
+    !!rect && x >= rect.left && x < rect.left + rect.width && y >= rect.top && y < rect.top + rect.height;
 
 const setIgnoreBlurSafe = (ignore: boolean) => {
     compactPreviewLog("set_ignore_blur", { ignore });
@@ -175,24 +183,21 @@ const schedulePreviewHide = (hide: () => void) => {
     cancelPreviewHideTimer();
     previewHideTimer = setTimeout(async () => {
         previewHideTimer = null;
-        // 面板悬停保护：鼠标还在预览面板上时绝不隐藏（即使面板自身的
-        // 鼠标事件没送达，这里也能在主窗口侧兜底）。
-        const rect = previewPanelRectPhysical;
-        if (rect) {
-            try {
-                const cursor = await cursorPosition();
-                const inside =
-                    cursor.x >= rect.left
-                    && cursor.x < rect.left + rect.width
-                    && cursor.y >= rect.top
-                    && cursor.y < rect.top + rect.height;
-                if (inside) {
-                    schedulePreviewHide(hide);
-                    return;
-                }
-            } catch {
-                // 拿不到光标位置就按原逻辑隐藏。
+        // 兜底轮询：面板显示期间每 PREVIEW_HIDE_BUFFER_MS 量一次光标位置，
+        // 光标既不在面板上也不在主窗口里就收起。面板自己的 mouseleave 会被
+        // 原生右键菜单的模态消息循环吞掉，漏掉一次就再也没有第二次边界穿越事件
+        // ——那就是预览窗莫名留在桌面上的根因，不能只靠 webview 事件。
+        try {
+            const cursor = await cursorPosition();
+            if (
+                isCursorInside(previewPanelRectPhysical, cursor.x, cursor.y)
+                || isCursorInside(previewMainRectPhysical, cursor.x, cursor.y)
+            ) {
+                schedulePreviewHide(hide);
+                return;
             }
+        } catch {
+            // 拿不到光标位置就按原逻辑隐藏。
         }
         hide();
     }, PREVIEW_HIDE_BUFFER_MS);
@@ -231,6 +236,9 @@ const showPreviewWindowAt = async (
             }
         }
         compactPreviewLog("preview window shown", { bounds, widthPhysical, heightPhysical });
+        // 显示即上表：兜底轮询从这一刻起接管，之后无论 webview 的鼠标事件
+        // 有没有送达，面板都不会在光标离开后一直留在桌面上。
+        schedulePreviewHide(() => { void hideCompactPreviewGlobal(); });
     } catch (err) {
         setIgnoreBlurSafe(false);
         compactPreviewLog("preview show failed", err);
@@ -243,6 +251,8 @@ const hideCompactPreviewGlobal = async () => {
     compactPreviewLog("hide preview requested", { hasWindow: !!previewWindow });
     cancelPreviewHideTimer();
     previewSideLatch.clear();
+    previewPanelRectPhysical = null;
+    previewMainRectPhysical = null;
     setIgnoreBlurSafe(false);
 
     if (!previewWindow) return;
@@ -329,16 +339,13 @@ const ensureCompactPreviewLifecycleListeners = async (): Promise<void> => {
                     compactPreviewLog("bind lifecycle listener failed", { eventName, err });
                 }
             }),
-            // 预览面板接受鼠标（KwikPaste 同款）：指针停在面板上时取消收起，
-            // 离开面板后按同样的缓冲收起——这样面板可以滚动、可以悬停阅读。
+            // 预览面板接受鼠标（KwikPaste 同款）：指针停在面板上时可以滚动、可以阅读。
+            // 进出的两个方向都只负责重新上表兜底轮询——留在面板上由光标位置判定保住，
+            // 不再靠 cancel 把唯一的收起入口交回给可能被吞掉的 webview 事件。
             (async () => {
                 try {
-                    await listen<boolean>("compact-preview-pointer", (event) => {
-                        if (event.payload) {
-                            cancelPreviewHideTimer();
-                        } else {
-                            schedulePreviewHide(() => { void hideCompactPreviewGlobal(); });
-                        }
+                    await listen<boolean>("compact-preview-pointer", () => {
+                        schedulePreviewHide(() => { void hideCompactPreviewGlobal(); });
                     });
                 } catch (err) {
                     console.error("Failed to bind preview pointer listener:", err);
@@ -1093,6 +1100,12 @@ const ClipboardItem = ({
                 width: panelWPhysical,
                 height: panelHPhysical
             };
+            previewMainRectPhysical = {
+                left: innerOrigin.x,
+                top: innerOrigin.y,
+                width: innerSize.width,
+                height: innerSize.height
+            };
             await showPreviewWindowAt(
                 { x: panelX, y: panelY },
                 panelWPhysical,
@@ -1534,8 +1547,8 @@ const ClipboardItem = ({
                 if (!compactPreviewEnabled) return;
                 // Don't show preview if AI options are open to avoid interference
                 if (showAIOptions) return;
-                // KwikPaste 的隐藏缓冲：卡片间移动时取消上一张卡片的收起。
-                cancelPreviewHideTimer();
+                // 卡片间移动时不收起：兜底轮询按"光标还在主窗口里就不收"保住面板，
+                // 这里不再 cancel——cancel 会把唯一的收起入口交回给鼠标事件本身。
                 compactPreviewLog("mouseenter schedule preview", { itemId: item.id });
                 const requestId = hoverRequestIdRef.current + 1;
                 hoverRequestIdRef.current = requestId;
@@ -1738,6 +1751,11 @@ const ClipboardItem = ({
                     </div>
                 ) : item.isInputting ? (
                     <div className="ai-input-wrapper">
+                        {item._aiQuestion && (
+                            <div style={{ fontSize: '12px', opacity: 0.75, marginBottom: '4px', whiteSpace: 'pre-wrap' }}>
+                                {item._aiQuestion}
+                            </div>
+                        )}
                         <input
                             autoFocus
                             className="search-input"

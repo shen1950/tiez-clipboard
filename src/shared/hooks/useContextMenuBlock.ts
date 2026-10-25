@@ -6,7 +6,8 @@ export const useContextMenuBlock = () => {
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
     };
-    document.addEventListener("contextmenu", handleContextMenu);
-    return () => document.removeEventListener("contextmenu", handleContextMenu);
+    // Capture phase: still block WKWebView default menu if a child handler early-returns.
+    document.addEventListener("contextmenu", handleContextMenu, true);
+    return () => document.removeEventListener("contextmenu", handleContextMenu, true);
   }, []);
 };

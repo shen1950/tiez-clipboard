@@ -22,6 +22,10 @@ pub fn init(path: PathBuf) {
     *guard = Some(path);
 }
 
+pub fn path() -> Option<PathBuf> {
+    LOG_PATH.lock().ok().and_then(|guard| guard.clone())
+}
+
 pub fn log(msg: &str) {
     if let Ok(guard) = LOG_PATH.lock() {
         if let Some(path) = &*guard {

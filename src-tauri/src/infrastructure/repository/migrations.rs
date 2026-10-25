@@ -207,8 +207,14 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         conn.execute("INSERT INTO schema_migrations (version) VALUES (10)", [])?;
     }
 
-    // Migration 11: Recycle bin support — soft delete timestamp
-    if current_version < 11 {
+    // ── TieZ-GuLing 专属编号段：100 起 ─────────────────────────────────────────
+    // 上游 TieZ 从 11 开始往后排（beta.7 已用到 19），本 fork 早期也占了 11/12，
+    // 两边同号不同义会让合并时互相跳过对方的迁移。1..10 是与上游共同的基线，
+    // 本 fork 的迁移一律从 100 起，永不进入上游占用的 11..99。
+    // 存量库里旧的 11/12 行保留不动，只补记新行；已经落过地的效果不重做。
+
+    // Migration 100: Recycle bin support — soft delete timestamp（原 fork 迁移 11）
+    if current_version < 100 {
         if !has_column(conn, "clipboard_history", "deleted_at")? {
             conn.execute(
                 "ALTER TABLE clipboard_history ADD COLUMN deleted_at INTEGER",
@@ -225,62 +231,75 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('recycle_bin_retention_days', '7')",
             [],
         )?;
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (100)", [])?;
     }
 
-    // Migration 12: FTS5 full-text search index (trigram tokenizer for CJK substring search).
+    // Migration 101: FTS5 full-text search index (trigram tokenizer for CJK substring search).
+    // （原 fork 迁移 12）
     // External-content table over clipboard_history; html_content is deliberately NOT indexed —
     // rich-text HTML snapshots dominate storage (MBs) while searchable text is tiny.
     // Column names MUST match clipboard_history (external-content rebuild selects by name).
-    if current_version < 12 {
-        let fts_setup = || -> Result<()> {
-            // Drop any partial/incorrect index from an earlier attempt so the
-            // schema below is authoritative and this migration is idempotent.
-            conn.execute_batch(
-                "
-                DROP TRIGGER IF EXISTS clipboard_fts_ai;
-                DROP TRIGGER IF EXISTS clipboard_fts_ad;
-                DROP TRIGGER IF EXISTS clipboard_fts_au;
-                DROP TABLE IF EXISTS clipboard_fts;
-                ",
-            )?;
-            conn.execute_batch(
-                "
-                CREATE VIRTUAL TABLE clipboard_fts USING fts5(
-                    content,
-                    source_app,
-                    tags,
-                    content='clipboard_history',
-                    content_rowid='id',
-                    tokenize='trigram'
-                );
+    if current_version < 101 {
+        // 旧编号 12 记过就说明索引已经建好，补记 101 即可，不必 drop 重建一遍。
+        let installed_under_legacy_number: bool = conn
+            .query_row(
+                "SELECT 1 FROM schema_migrations WHERE version = 12",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if installed_under_legacy_number {
+            conn.execute("INSERT OR IGNORE INTO schema_migrations (version) VALUES (101)", [])?;
+        } else {
+            let fts_setup = || -> Result<()> {
+                // Drop any partial/incorrect index from an earlier attempt so the
+                // schema below is authoritative and this migration is idempotent.
+                conn.execute_batch(
+                    "
+                    DROP TRIGGER IF EXISTS clipboard_fts_ai;
+                    DROP TRIGGER IF EXISTS clipboard_fts_ad;
+                    DROP TRIGGER IF EXISTS clipboard_fts_au;
+                    DROP TABLE IF EXISTS clipboard_fts;
+                    ",
+                )?;
+                conn.execute_batch(
+                    "
+                    CREATE VIRTUAL TABLE clipboard_fts USING fts5(
+                        content,
+                        source_app,
+                        tags,
+                        content='clipboard_history',
+                        content_rowid='id',
+                        tokenize='trigram'
+                    );
 
-                CREATE TRIGGER clipboard_fts_ai AFTER INSERT ON clipboard_history BEGIN
-                    INSERT INTO clipboard_fts (rowid, content, source_app, tags)
-                    VALUES (new.id, new.content, new.source_app, new.tags);
-                END;
+                    CREATE TRIGGER clipboard_fts_ai AFTER INSERT ON clipboard_history BEGIN
+                        INSERT INTO clipboard_fts (rowid, content, source_app, tags)
+                        VALUES (new.id, new.content, new.source_app, new.tags);
+                    END;
 
-                CREATE TRIGGER clipboard_fts_ad AFTER DELETE ON clipboard_history BEGIN
-                    INSERT INTO clipboard_fts (clipboard_fts, rowid, content, source_app, tags)
-                    VALUES ('delete', old.id, old.content, old.source_app, old.tags);
-                END;
+                    CREATE TRIGGER clipboard_fts_ad AFTER DELETE ON clipboard_history BEGIN
+                        INSERT INTO clipboard_fts (clipboard_fts, rowid, content, source_app, tags)
+                        VALUES ('delete', old.id, old.content, old.source_app, old.tags);
+                    END;
 
-                CREATE TRIGGER clipboard_fts_au AFTER UPDATE ON clipboard_history BEGIN
-                    INSERT INTO clipboard_fts (clipboard_fts, rowid, content, source_app, tags)
-                    VALUES ('delete', old.id, old.content, old.source_app, old.tags);
-                    INSERT INTO clipboard_fts (rowid, content, source_app, tags)
-                    VALUES (new.id, new.content, new.source_app, new.tags);
-                END;
-                ",
-            )?;
-            // Backfill index from existing rows (idempotent full rebuild)
-            conn.execute("INSERT INTO clipboard_fts (clipboard_fts) VALUES ('rebuild')", [])?;
-            Ok(())
-        };
-        // If FTS5/trigram is unavailable in this SQLite build, skip the index;
-        // search falls back to the LIKE path at runtime.
-        if fts_setup().is_ok() {
-            conn.execute("INSERT INTO schema_migrations (version) VALUES (12)", [])?;
+                    CREATE TRIGGER clipboard_fts_au AFTER UPDATE ON clipboard_history BEGIN
+                        INSERT INTO clipboard_fts (clipboard_fts, rowid, content, source_app, tags)
+                        VALUES ('delete', old.id, old.content, old.source_app, old.tags);
+                        INSERT INTO clipboard_fts (rowid, content, source_app, tags)
+                        VALUES (new.id, new.content, new.source_app, new.tags);
+                    END;
+                    ",
+                )?;
+                // Backfill index from existing rows (idempotent full rebuild)
+                conn.execute("INSERT INTO clipboard_fts (clipboard_fts) VALUES ('rebuild')", [])?;
+                Ok(())
+            };
+            // If FTS5/trigram is unavailable in this SQLite build, skip the index;
+            // search falls back to the LIKE path at runtime.
+            if fts_setup().is_ok() {
+                conn.execute("INSERT INTO schema_migrations (version) VALUES (101)", [])?;
+            }
         }
     }
 
@@ -297,4 +316,73 @@ fn has_column(conn: &Connection, table_name: &str, column_name: &str) -> Result<
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn versions(conn: &Connection) -> Vec<i32> {
+        let mut stmt = conn
+            .prepare("SELECT version FROM schema_migrations ORDER BY version")
+            .unwrap();
+        let rows = stmt.query_map([], |r| r.get::<_, i32>(0)).unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    }
+
+    /// 本 fork 的迁移绝不允许落在上游 TieZ 占用的 11..99 编号段里，
+    /// 否则合并时两边 `if current_version < N` 会互相跳过对方的迁移。
+    #[test]
+    fn fork_migrations_stay_out_of_the_upstream_number_band() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let vs = versions(&conn);
+        assert!(vs.iter().any(|v| *v == 100), "缺少 fork 迁移 100: {:?}", vs);
+        assert!(vs.iter().any(|v| *v == 101), "缺少 fork 迁移 101: {:?}", vs);
+        for v in &vs {
+            assert!(
+                *v <= 10 || *v >= 100,
+                "迁移 {} 落进了上游编号段 11..99",
+                v
+            );
+        }
+    }
+
+    /// 存量库带着旧的 fork 编号 11/12，升级后必须补记 100/101，
+    /// 且回收站列和 FTS 索引都还在、还能查——不重做也不弄坏。
+    #[test]
+    fn legacy_fork_numbering_upgrades_without_rebuilding() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        // 伪装成"旧编号时代"的库：删掉 100/101，补上 11/12。
+        conn.execute(
+            "DELETE FROM schema_migrations WHERE version IN (100, 101)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])
+            .unwrap();
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (12)", [])
+            .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let vs = versions(&conn);
+        assert!(vs.contains(&100) && vs.contains(&101), "补记失败: {:?}", vs);
+        assert!(has_column(&conn, "clipboard_history", "deleted_at").unwrap());
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM clipboard_fts", [], |r| r.get(0))
+            .unwrap();
+        assert!(n >= 0, "FTS 索引被弄坏了");
+    }
+
+    /// 跑两遍不能报错，也不能留下重复行。
+    #[test]
+    fn migrations_are_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let first = versions(&conn);
+        run_migrations(&conn).unwrap();
+        assert_eq!(first, versions(&conn));
+    }
 }

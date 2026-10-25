@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -29,7 +29,7 @@ interface AppHeaderProps {
   setShowRecycleBin: (val: boolean) => void;
   isWindowPinned: boolean;
   setIsWindowPinned: (val: boolean) => void;
-  clearHistory: (contentType?: string | null, typeLabel?: string | null) => void;
+  clearHistory: (contentType?: string | null, typeLabel?: string | null, keepTagged?: boolean, keepPinned?: boolean) => void;
   showSearchBox: boolean;
   search: string;
   setSearch: (val: string) => void;
@@ -103,7 +103,57 @@ const AppHeader = ({
 
   // 清空菜单：一次点击选范围，避免"想清一类却清了全部"。
   const [clearMenuOpen, setClearMenuOpen] = useState(false);
+  // 清空时的保留项：标签 / 置顶（默认都保留）。
+  const [clearKeepTagged, setClearKeepTagged] = useState(true);
+  const [clearKeepPinned, setClearKeepPinned] = useState(true);
   const clearMenuRef = useRef<HTMLDivElement | null>(null);
+  const clearPanelRef = useRef<HTMLDivElement | null>(null);
+  // 菜单落位（相对锚点按钮的偏移）。null = 走 CSS 默认的 right:0。
+  const [clearMenuPos, setClearMenuPos] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
+
+  // 菜单比按钮宽得多，而主窗口默认只有 352px 宽，垃圾桶按钮落在窗口左半边。
+  // 死守 right:0 会把菜单左半截顶到窗口外，"清空范围""保留项"和全部类型项
+  // 都被裁掉，只剩"全部类型"的一个"型"字。这里按可用空间翻转/夹取，保证整块菜单都在窗口内。
+  useLayoutEffect(() => {
+    if (!clearMenuOpen) {
+      setClearMenuPos(null);
+      return;
+    }
+    const place = () => {
+      const panelEl = clearPanelRef.current;
+      const anchor = clearMenuRef.current?.getBoundingClientRect();
+      const panel = panelEl?.getBoundingClientRect();
+      if (!anchor || !panel || !panelEl) return;
+      const margin = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const width = panel.width;
+      const naturalHeight = panelEl.scrollHeight;
+
+      let left = anchor.right - width;
+      if (left < margin) left = anchor.left;            // 左侧放不下就翻到按钮右边
+      left = Math.min(Math.max(left, margin), vw - margin - width);
+
+      // 垂直：优先挂在按钮下方（按钮保持可点）；下方不够就上翻；都不够就压缩并内部滚动。
+      const below = vh - margin - (anchor.bottom + 6);
+      const above = anchor.top - margin - 6;
+      let top = anchor.bottom + 6;
+      let maxHeight = below;
+      if (below < Math.min(naturalHeight, 140) && above > below) {
+        top = anchor.top - 6 - Math.min(naturalHeight, above);
+        maxHeight = above;
+      }
+
+      setClearMenuPos({
+        left: left - anchor.left,
+        top: top - anchor.top,
+        maxHeight: Math.max(maxHeight, 80)
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [clearMenuOpen]);
 
   useEffect(() => {
     if (!clearMenuOpen) return;
@@ -126,7 +176,7 @@ const AppHeader = ({
 
   const runClear = (type: string | null) => {
     setClearMenuOpen(false);
-    clearHistory(type, type ? getTypeName(type) : null);
+    clearHistory(type, type ? getTypeName(type) : null, clearKeepTagged, clearKeepPinned);
   };
 
   return (
@@ -175,8 +225,31 @@ const AppHeader = ({
                 <Trash2 size={16} />
               </button>
               {clearMenuOpen && (
-                <div className="header-menu">
+                <div
+                  className="header-menu"
+                  ref={clearPanelRef}
+                  style={clearMenuPos ? { left: clearMenuPos.left, top: clearMenuPos.top, right: 'auto', maxHeight: clearMenuPos.maxHeight } : undefined}
+                >
                   <div className="header-menu-label">{t('clear_scope')}</div>
+                  <div className="header-menu-keep">
+                    <span className="header-menu-keep-label">{t('clear_keep_label')}</span>
+                    <div className="header-menu-keep-opts">
+                      <button
+                        className="header-menu-item"
+                        onClick={() => setClearKeepTagged(v => !v)}
+                      >
+                        <span style={{ marginRight: '6px' }}>{clearKeepTagged ? '☑' : '☐'}</span>
+                        {t('clear_keep_tagged')}
+                      </button>
+                      <button
+                        className="header-menu-item"
+                        onClick={() => setClearKeepPinned(v => !v)}
+                      >
+                        <span style={{ marginRight: '6px' }}>{clearKeepPinned ? '☑' : '☐'}</span>
+                        {t('clear_keep_pinned')}
+                      </button>
+                    </div>
+                  </div>
                   <button className="header-menu-item header-menu-item--primary" onClick={() => runClear(null)}>
                     {t('clear_all')}
                   </button>
