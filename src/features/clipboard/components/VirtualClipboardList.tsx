@@ -1,8 +1,9 @@
-import React, { useRef, useImperativeHandle, useCallback, useMemo } from 'react';
+import React, { useRef, useImperativeHandle, useCallback, useMemo, useEffect } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import type { ListRange } from 'react-virtuoso';
 import type { ClipboardEntry } from "../../../shared/types";
 import type { VirtualClipboardListHandle, VirtualClipboardListProps } from "../types";
+import { scheduleHoverRecheckAfterListChange } from "../lib/compactPreviewControls";
 
 type VirtuosoListContext = {
     header?: React.ReactNode;
@@ -50,6 +51,15 @@ const VirtualClipboardList = React.forwardRef<VirtualClipboardListHandle, Virtua
 
         const virtuosoRef = useRef<VirtuosoHandle>(null);
         const visibleRangeRef = useRef<ListRange | null>(null);
+        const isFirstItemsEffect = useRef(true);
+        // 删除/新增/重排后补位的卡片拿不到原生 mouseenter，通知各卡片按光标位置重判悬停。
+        useEffect(() => {
+            if (isFirstItemsEffect.current) {
+                isFirstItemsEffect.current = false;
+                return;
+            }
+            scheduleHoverRecheckAfterListChange();
+        }, [items]);
         useImperativeHandle(ref, () => ({
             scrollToItem: (index: number) => {
                 virtuosoRef.current?.scrollIntoView({

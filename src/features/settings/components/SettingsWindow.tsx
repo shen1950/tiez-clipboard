@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { X } from "lucide-react";
+import { X, Minus, Square, Maximize2 } from "lucide-react";
 import { translations } from "../../../locales";
 import SettingsPanel from "./SettingsPanel";
 import ToastContainer from "../../../shared/components/ToastContainer";
@@ -271,26 +271,10 @@ const SettingsWindow = () => {
         [hotkey]
     );
 
-    const settingsPanelProps = useSettingsPanelProps({
-        t,
-        theme,
-        language,
-        colorMode,
-        hotkeyParts,
-        checkHotkeyConflict,
-        updateHotkey,
-        updateSequentialHotkey,
-        updateRichPasteHotkey,
-        updateSearchHotkey,
-        saveAppSetting,
-        saveSetting,
-        saveMqtt,
-        saveCloudSync,
-        fetchEffectiveTransferPath,
-        handleResetSettings,
-        toggleGroup,
-        state: appState
-    });
+    const [pageTitle, setPageTitle] = useState("");
+    const onPageTitleChange = useCallback((title: string) => {
+        setPageTitle(title);
+    }, []);
 
     // Live sync: broadcast whenever a persisted setting changes in this window.
     const lastSnapshotRef = useRef<string | null>(null);
@@ -333,6 +317,80 @@ const SettingsWindow = () => {
         settingsWindow?.close().catch(() => { });
     }, [settingsWindow]);
 
+    const minimizeWindow = useCallback(() => {
+        settingsWindow?.minimize().catch(() => { });
+    }, [settingsWindow]);
+
+    const toggleMaximizeWindow = useCallback(() => {
+        settingsWindow?.toggleMaximize().catch(() => { });
+    }, [settingsWindow]);
+
+    const [isMaximized, setIsMaximized] = useState(false);
+    useEffect(() => {
+        const win = settingsWindow;
+        if (!win) return;
+        win.isMaximized()
+            .then((v) => setIsMaximized(v))
+            .catch(() => { });
+        const unlisten = win.onResized(() => {
+            win.isMaximized()
+                .then((v) => setIsMaximized(v))
+                .catch(() => { });
+        });
+        return () => {
+            unlisten.then((off) => off()).catch(() => { });
+        };
+    }, [settingsWindow]);
+
+    const windowControls = (
+        <div className="window-controls window-no-drag">
+            <button
+                className="btn-icon window-control-btn window-no-drag window-control-minimize"
+                title={t("minimize") || "最小化"}
+                onClick={minimizeWindow}
+            >
+                <Minus size={16} />
+            </button>
+            <button
+                className="btn-icon window-control-btn window-no-drag window-control-maximize"
+                title={isMaximized ? (t("restore") || "还原") : (t("maximize") || "最大化")}
+                onClick={toggleMaximizeWindow}
+            >
+                {isMaximized ? <Maximize2 size={15} /> : <Square size={14} />}
+            </button>
+            <button
+                className="btn-icon window-control-btn window-no-drag window-control-close"
+                title={t("close")}
+                onClick={closeWindow}
+            >
+                <X size={16} />
+            </button>
+        </div>
+    );
+
+    const settingsPanelProps = useSettingsPanelProps({
+        t,
+        theme,
+        language,
+        colorMode,
+        hotkeyParts,
+        checkHotkeyConflict,
+        updateHotkey,
+        updateSequentialHotkey,
+        updateRichPasteHotkey,
+        updateSearchHotkey,
+        saveAppSetting,
+        saveSetting,
+        saveMqtt,
+        saveCloudSync,
+        fetchEffectiveTransferPath,
+        handleResetSettings,
+        toggleGroup,
+        onPageTitleChange,
+        pageTitle,
+        windowControls,
+        state: appState
+    });
 
     useEffect(() => {
         document.title = "TieZ-GuLing";
@@ -340,17 +398,6 @@ const SettingsWindow = () => {
 
     return (
         <div className="settings-window-root">
-            <header className="settings-window-header">
-                <div className="settings-window-drag" data-tauri-drag-region>
-                    <span className="settings-window-title">
-                        TieZ-GuLing
-                    </span>
-                </div>
-                <button className="btn-icon window-no-drag" title={t("close")} onClick={closeWindow}>
-                    <X size={16} />
-                </button>
-            </header>
-
             <main className="settings-window-main">
                 <div className="settings-view">
                     <SettingsPanel {...settingsPanelProps} />

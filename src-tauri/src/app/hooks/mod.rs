@@ -455,7 +455,9 @@ pub unsafe extern "system" fn mouse_proc(n_code: i32, w_param: WPARAM, l_param: 
                                     if WINDOW_PINNED.load(Ordering::Relaxed) {
                                         // Pinned: Just reset focusable state to ensure we don't retain focus
                                         let _ = window.set_focusable(false);
-                                    } else {
+                                    } else if !crate::app::window_manager::collapse_to_edge_if_docked(handle) {
+                                        // Docked panels retract into their edge sliver
+                                        // instead of disappearing completely.
                                         dismiss_clipboard_window(handle);
                                     }
                                 }

@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import SettingsPanel from "../components/SettingsPanel";
 import type { AppState } from "../../app/types";
 import type { Locale } from "../../../shared/types";
@@ -23,6 +23,9 @@ interface UseSettingsPanelPropsOptions {
   fetchEffectiveTransferPath: () => void;
   handleResetSettings: () => void;
   toggleGroup: (group: string) => void;
+  onPageTitleChange: (title: string) => void;
+  pageTitle: string;
+  windowControls: ReactNode;
   state: AppState;
 }
 
@@ -44,6 +47,9 @@ export const useSettingsPanelProps = ({
   fetchEffectiveTransferPath,
   handleResetSettings,
   toggleGroup,
+  onPageTitleChange,
+  pageTitle,
+  windowControls,
   state
 }: UseSettingsPanelPropsOptions): SettingsPanelProps => {
   const {
@@ -430,6 +436,9 @@ export const useSettingsPanelProps = ({
     aiAssignedProfileMouthpiece,
     setAiAssignedProfileMouthpiece,
     aiAssignedProfileTranslate,
-    setAiAssignedProfileTranslate
+    setAiAssignedProfileTranslate,
+    onPageTitleChange,
+    pageTitle,
+    windowControls
   };
 };

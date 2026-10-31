@@ -244,7 +244,10 @@ pub fn set_ignore_blur(ignore: bool) {
 pub fn set_window_pinned(app_handle: AppHandle, state: State<'_, DbState>, pinned: bool) {
     crate::WINDOW_PINNED.store(pinned, Ordering::Relaxed);
     if let Some(window) = app_handle.get_webview_window("main") {
-        let _ = window.set_always_on_top(pinned);
+        // A docked panel has to stay above other windows even when it is not
+        // pinned, otherwise its sliver disappears behind the active app.
+        let docked = crate::CURRENT_DOCK.load(Ordering::Relaxed) != 0;
+        let _ = window.set_always_on_top(pinned || docked);
         let _ = window.set_focusable(false);
         #[cfg(windows)]
         {

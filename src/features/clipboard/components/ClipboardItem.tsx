@@ -44,7 +44,7 @@ import { toTauriLocalImageSrc } from "../../../shared/lib/localImageSrc";
 import { getRichTextSnapshotDataUrl } from "../../../shared/lib/richTextSnapshot";
 import { getFileIcon as getSystemFileIcon, peekFileIcon } from "../../../shared/lib/fileIcon";
 import { getSourceAppIcon, peekSourceAppIcon } from "../../../shared/lib/sourceAppIcon";
-import { registerCompactPreviewControls } from "../lib/compactPreviewControls";
+import { registerCompactPreviewControls, registerHoverRecheckSubscriber } from "../lib/compactPreviewControls";
 import {
     PREVIEW_PANEL,
     computePreviewPanelSize,
@@ -159,6 +159,23 @@ let previewMainRectPhysical: PreviewRectPhysical | null = null;
 // 收起缓冲，同时也是兜底轮询的间隔：面板显示期间每这么久量一次光标。
 const PREVIEW_HIDE_BUFFER_MS = 500;
 let previewHideTimer: ReturnType<typeof setTimeout> | null = null;
+// 面板正在显示的条目 id：重判悬停时跳过已在预览的条目，避免重复摆放面板。
+let currentPreviewItemId: number | null = null;
+// 光标最近一次 mousemove 的 client 坐标：列表补位后光标不动，
+// 重判悬停只能取这个位置（光标没动过，它就是当前位置）。
+let lastPointerClient: { x: number; y: number } | null = null;
+let pointerTrackerInstalled = false;
+const installPointerTracker = () => {
+    if (pointerTrackerInstalled) return;
+    pointerTrackerInstalled = true;
+    window.addEventListener(
+        "mousemove",
+        (e) => {
+            lastPointerClient = { x: e.clientX, y: e.clientY };
+        },
+        { capture: true, passive: true }
+    );
+};
 
 type PreviewRectPhysical = { left: number; top: number; width: number; height: number };
 
@@ -253,6 +270,7 @@ const hideCompactPreviewGlobal = async () => {
     previewSideLatch.clear();
     previewPanelRectPhysical = null;
     previewMainRectPhysical = null;
+    currentPreviewItemId = null;
     setIgnoreBlurSafe(false);
 
     if (!previewWindow) return;
@@ -912,6 +930,31 @@ const ClipboardItem = ({
         schedulePreviewHide(() => { void hideCompactPreviewGlobal(); });
     };
 
+    // 悬停展示的统一起点：mouseenter 与列表补位后的重判都走这里，
+    // 400ms 延时与所有守卫保持一致。
+    const beginHoverPreview = (pointerX: number, source: string) => {
+        compactPreviewLog(`${source} schedule preview`, { itemId: item.id });
+        const requestId = hoverRequestIdRef.current + 1;
+        hoverRequestIdRef.current = requestId;
+        const target = itemRef.current;
+
+        // Clear any pending hide timer
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+
+        // Set a delay to show
+        hoverTimerRef.current = setTimeout(() => {
+            hoverTimerRef.current = null;
+            // Double-check AI options are still closed before showing
+            if (showAIOptions) return;
+            // Re-check mask state: it may have changed during the hover delay
+            if (isSensitiveHiddenRef.current) return;
+            if (!target || !target.isConnected) return;
+            if (!isHoverPreviewRequestCurrent(requestId)) return;
+            compactPreviewLog(`${source} timer fired, show preview`, { itemId: item.id });
+            void showCompactPreview(pointerX, requestId);
+        }, 400); // 0.4s delay: snappy like KwikPaste, still avoids drive-by hovers
+    };
+
     const showCompactPreview = async (pointerClientX: number, requestId: number) => {
         if (!compactPreviewEnabled) return;
         if (!isHoverPreviewRequestCurrent(requestId)) {
@@ -1057,6 +1100,7 @@ const ClipboardItem = ({
                 cardLogical, windowLogical, panel, available, side
             );
 
+            currentPreviewItemId = item.id;
             compactPreviewLog("emit compact-preview-update", {
                 itemId: item.id,
                 contentType: item.content_type,
@@ -1201,6 +1245,28 @@ const ClipboardItem = ({
             cancelHoverPreview();
             void hideCompactPreviewGlobal();
         };
+    }, []);
+
+    // 列表增删/重排后，补位到光标下的卡片收不到原生 mouseenter（WebView2 不为
+    // 静止光标下的 DOM 位移补发边界事件），由列表广播触发这里按光标位置重判：
+    // 只有真正被光标压住的卡片（:hover 为真）才接上与 mouseenter 相同的展示路径。
+    const hoverRecheckRef = useRef<() => void>(() => { });
+    useEffect(() => {
+        hoverRecheckRef.current = () => {
+            if (!compactPreviewEnabled) return;
+            if (showAIOptions) return;
+            if (currentPreviewItemId === item.id) return;
+            const node = itemRef.current;
+            if (!node || !node.isConnected) return;
+            if (!node.matches(":hover")) return;
+            const pointer = lastPointerClient;
+            if (!pointer) return;
+            beginHoverPreview(pointer.x, "list-change recheck");
+        };
+    });
+    useEffect(() => {
+        installPointerTracker();
+        return registerHoverRecheckSubscriber(() => hoverRecheckRef.current());
     }, []);
 
     const renderFilePreview = () => {
@@ -1549,27 +1615,7 @@ const ClipboardItem = ({
                 if (showAIOptions) return;
                 // 卡片间移动时不收起：兜底轮询按"光标还在主窗口里就不收"保住面板，
                 // 这里不再 cancel——cancel 会把唯一的收起入口交回给鼠标事件本身。
-                compactPreviewLog("mouseenter schedule preview", { itemId: item.id });
-                const requestId = hoverRequestIdRef.current + 1;
-                hoverRequestIdRef.current = requestId;
-                const pointerX = e.clientX;
-                const target = e.currentTarget;
-
-                // Clear any pending hide timer
-                if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-
-                // Set a delay to show
-                hoverTimerRef.current = setTimeout(() => {
-                    hoverTimerRef.current = null;
-                    // Double-check AI options are still closed before showing
-                    if (showAIOptions) return;
-                    // Re-check mask state: it may have changed during the hover delay
-                    if (isSensitiveHiddenRef.current) return;
-                    if (!target.isConnected) return;
-                    if (!isHoverPreviewRequestCurrent(requestId)) return;
-                    compactPreviewLog("mouseenter timer fired, show preview", { itemId: item.id });
-                    void showCompactPreview(pointerX, requestId);
-                }, 400); // 0.4s delay: snappy like KwikPaste, still avoids drive-by hovers
+                beginHoverPreview(e.clientX, "mouseenter");
             }}
             onMouseLeave={() => {
                 compactPreviewLog("mouseleave schedule hide preview", { itemId: item.id });

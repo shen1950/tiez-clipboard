@@ -7,6 +7,7 @@ import { useState } from "react";
 interface SettingsFooterProps {
     t: (key: string) => string;
     appVersion: string;
+    appLogo: string;
     updateStatus: string;
     setUpdateStatus: (val: string) => void;
     onResetSettings: () => void;
@@ -17,6 +18,7 @@ interface SettingsFooterProps {
 const SettingsFooter = ({
     t,
     appVersion,
+    appLogo,
     updateStatus,
     setUpdateStatus,
     onResetSettings,
@@ -209,6 +211,23 @@ const SettingsFooter = ({
                 </div>
             )}
 
+            {/* About hero: logo + name + version */}
+            <div className="settings-about-hero">
+                {appLogo ? (
+                    <img
+                        src={appLogo}
+                        alt="TieZ-GuLing"
+                        className="settings-about-logo"
+                        draggable={false}
+                        onDragStart={(e) => e.preventDefault()}
+                    />
+                ) : (
+                    <span className="settings-about-logo settings-about-logo-placeholder" aria-hidden />
+                )}
+                <div className="settings-about-name">TieZ-GuLing</div>
+                <div className="settings-about-version">v{appVersion || "0.2.0"}</div>
+            </div>
+
             {/* Footer Actions */}
             <div style={{
                 marginTop: '16px',
@@ -286,7 +305,6 @@ const SettingsFooter = ({
                     justifyContent: 'center',
                     gap: '8px'
                 }}>
-                    <span>TieZ-GuLing {appVersion ? `v${appVersion}` : "v0.2.0"}</span>
                     <button
                         onClick={async () => {
                             if (updateStatus) return;

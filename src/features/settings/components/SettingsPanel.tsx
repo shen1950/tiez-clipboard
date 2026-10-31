@@ -1,5 +1,6 @@
 
 import { memo, useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -245,6 +246,9 @@ interface SettingsPanelProps {
     setAiAssignedProfileMouthpiece: (id: string) => void;
     aiAssignedProfileTranslate: string;
     setAiAssignedProfileTranslate: (id: string) => void;
+    onPageTitleChange: (title: string) => void;
+    pageTitle: string;
+    windowControls: ReactNode;
 }
 
 const SettingsPanel = (props: SettingsPanelProps) => {
@@ -281,11 +285,15 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         setFileServerEnabled, setFileServerPort, setFileTransferAutoOpen, setShowAutoCloseHint, setFileServerAutoClose, setFileTransferAutoCopy, fetchEffectiveTransferPath,
         setShowAppSelector, handleResetSettings,
         aiEnabled, setAiEnabled, aiTargetLang, setAiTargetLang, aiThinkingBudget, setAiThinkingBudget, saveSetting,
-        aiProfiles, setAiProfiles, aiAssignedProfileTask, setAiAssignedProfileTask, aiAssignedProfileMouthpiece, setAiAssignedProfileMouthpiece, aiAssignedProfileTranslate, setAiAssignedProfileTranslate
+        aiProfiles, setAiProfiles, aiAssignedProfileTask, setAiAssignedProfileTask, aiAssignedProfileMouthpiece, setAiAssignedProfileMouthpiece, aiAssignedProfileTranslate, setAiAssignedProfileTranslate,
+        onPageTitleChange,
+        pageTitle,
+        windowControls
     } = props;
 
     const [emailCopied, setEmailCopied] = useState(false);
     const [appVersion, setAppVersion] = useState("");
+    const [appLogo, setAppLogo] = useState("");
     const [mqttStatus, setMqttStatus] = useState<"connected" | "disconnected" | "connecting">("disconnected");
     const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatusPayload>({
         state: "disabled",
@@ -417,6 +425,10 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 console.error("Failed to get version:", err);
                 setAppVersion("0.2.0");
             });
+
+        invoke<string>("get_app_logo")
+            .then(logo => setAppLogo(logo))
+            .catch(err => console.error("Failed to get app logo:", err));
 
         const unlistenMqtt = listen<string>("mqtt-status", (event) => {
             console.log('[MQTT STATUS] Received status:', event.payload);
@@ -817,6 +829,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             <SettingsFooter
                 t={t}
                 appVersion={appVersion}
+                appLogo={appLogo}
                 updateStatus={updateStatus}
                 setUpdateStatus={setUpdateStatus}
                 // Removed setUpdateModalData
@@ -827,6 +840,11 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         ) }
     ].filter(category => category.id !== "cloud_sync" || CLOUD_SYNC_ENABLED);
 
+    useEffect(() => {
+        const current = categories.find(category => category.id === activeCategory);
+        if (current) onPageTitleChange(current.label);
+    }, [categories, activeCategory, onPageTitleChange]);
+
     return (
         <>
             <SettingsNavigation
@@ -834,6 +852,10 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 active={activeCategory}
                 onSelect={selectCategory}
                 label={t("settings_navigation")}
+                appLogo={appLogo}
+                appVersion={appVersion}
+                pageTitle={pageTitle}
+                windowControls={windowControls}
             />
             <AiProfileModal
                         editingProfile={editingProfile}

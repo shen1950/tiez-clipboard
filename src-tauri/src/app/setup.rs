@@ -751,6 +751,9 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
                         let _ = window.show();
                         IS_HIDDEN.store(false, Ordering::Relaxed);
                         CURRENT_DOCK.store(0, Ordering::Relaxed);
+                        if !WINDOW_PINNED.load(Ordering::Relaxed) {
+                            let _ = window.set_always_on_top(false);
+                        }
                     }
                 }
                 continue;
@@ -880,6 +883,8 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
                     dock = DockPosition::Right;
                 }
 
+                let pinned = WINDOW_PINNED.load(Ordering::Relaxed);
+
                 if is_hidden_by_edge {
                     if is_mouse_in {
                         let current_dock = CURRENT_DOCK.load(Ordering::Relaxed);
@@ -892,6 +897,9 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
 
                         if dock_actual != DockPosition::None {
                             let _ = window.show();
+                            // The revealed panel still belongs to this edge, so it
+                            // must float above the window the user is working in.
+                            let _ = window.set_always_on_top(true);
                             match dock_actual {
                                 DockPosition::Top => {
                                     let _ = window.set_position(tauri::Position::Physical(
@@ -922,85 +930,69 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
                             }
 
                             IS_HIDDEN.store(false, Ordering::Relaxed);
-                            CURRENT_DOCK.store(0, Ordering::Relaxed);
+                            // CURRENT_DOCK survives the reveal: leaving the window
+                            // collapses it again unless the user pinned it.
                         }
                     }
                 } else if dock != DockPosition::None {
+                    // A pinned window stays where the user put it: pin means
+                    // "never retract on its own", so it never docks.
+                    if pinned {
+                        continue;
+                    }
+
                     // Don't dock while dragging (Left Mouse Button down)
                     let is_lbutton_down = unsafe { (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 };
                     if is_mouse_in || is_lbutton_down {
                         continue;
                     }
 
-                    if !IS_HIDDEN.load(Ordering::Relaxed) {
-                        // Auto-enable pin only when docking occurs (runtime only, no DB write)
-                        if !WINDOW_PINNED.load(Ordering::Relaxed) {
-                            WINDOW_PINNED.store(true, Ordering::Relaxed);
-                            let _ = window.set_always_on_top(true);
-                            let _ = window.set_focusable(false);
-                            #[cfg(windows)]
-                            if let Ok(hwnd) = window.hwnd() {
-                                unsafe {
-                                    let ex_style =
-                                        windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(
-                                            HWND(hwnd.0),
-                                            GWL_EXSTYLE,
-                                        );
-                                    let _ =
-                                        windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(
-                                            HWND(hwnd.0),
-                                            GWL_EXSTYLE,
-                                            ex_style | WS_EX_NOACTIVATE.0 as isize,
-                                        );
-                                }
-                            }
-                            let _ = app_handle.emit("window-pinned-changed", true);
+                    let window_height = rect.bottom - rect.top;
+                    let window_width = rect.right - rect.left;
+                    match dock {
+                        DockPosition::Top => {
+                            let _ = window.set_position(tauri::PhysicalPosition::new(
+                                rect.left,
+                                screen_top - window_height + hide_size,
+                            ));
+                            CURRENT_DOCK.store(1, Ordering::Relaxed);
                         }
-
-                        let window_height = rect.bottom - rect.top;
-                        let window_width = rect.right - rect.left;
-                        match dock {
-                            DockPosition::Top => {
-                                let _ = window.set_position(tauri::PhysicalPosition::new(
-                                    rect.left,
-                                    screen_top - window_height + hide_size,
-                                ));
-                                CURRENT_DOCK.store(1, Ordering::Relaxed);
-                            }
-                            DockPosition::Left => {
-                                let _ = window.set_position(tauri::PhysicalPosition::new(
-                                    screen_left - window_width + hide_size,
-                                    rect.top,
-                                ));
-                                CURRENT_DOCK.store(2, Ordering::Relaxed);
-                            }
-                            DockPosition::Right => {
-                                let _ = window.set_position(tauri::PhysicalPosition::new(
-                                    screen_right - hide_size,
-                                    rect.top,
-                                ));
-                                CURRENT_DOCK.store(3, Ordering::Relaxed);
-                            }
-                            _ => {}
+                        DockPosition::Left => {
+                            let _ = window.set_position(tauri::PhysicalPosition::new(
+                                screen_left - window_width + hide_size,
+                                rect.top,
+                            ));
+                            CURRENT_DOCK.store(2, Ordering::Relaxed);
                         }
-                        IS_HIDDEN.store(true, Ordering::Relaxed);
+                        DockPosition::Right => {
+                            let _ = window.set_position(tauri::PhysicalPosition::new(
+                                screen_right - hide_size,
+                                rect.top,
+                            ));
+                            CURRENT_DOCK.store(3, Ordering::Relaxed);
+                        }
+                        _ => {}
                     }
-                } else if IS_HIDDEN.load(Ordering::Relaxed) {
-                    IS_HIDDEN.store(false, Ordering::Relaxed);
+                    // Keep the 3px sliver reachable above other windows without
+                    // touching the user's pin state.
+                    let _ = window.set_always_on_top(true);
+                    IS_HIDDEN.store(true, Ordering::Relaxed);
+
+                    // Don't leave keyboard focus on a window that just went
+                    // off-screen; hand it back to whatever the user was in.
+                    if window.is_focused().unwrap_or(false) {
+                        let handle = app_handle.clone();
+                        std::thread::spawn(move || {
+                            let _ = crate::app::window_manager::restore_last_focus(handle);
+                        });
+                    }
+                } else if CURRENT_DOCK.load(Ordering::Relaxed) != 0 {
+                    // Dragged away from the edge: release the dock slot and go
+                    // back to being a normal focusable window.
                     CURRENT_DOCK.store(0, Ordering::Relaxed);
-
-                    // Restore pinned state based on user setting when undocked
-                    let mut user_pinned = WINDOW_PINNED.load(Ordering::Relaxed);
-                    if let Some(db_state) = app_handle.try_state::<DbState>() {
-                        if let Ok(val) = db_state.settings_repo.get("app.window_pinned") {
-                            user_pinned = val.as_deref() == Some("true");
-                        }
-                    }
-
-                    let prev = WINDOW_PINNED.swap(user_pinned, Ordering::Relaxed);
-                    if prev != user_pinned {
-                        let _ = window.set_always_on_top(user_pinned);
-                        let _ = window.set_focusable(!user_pinned);
+                    if !pinned {
+                        let _ = window.set_always_on_top(false);
+                        let _ = window.set_focusable(true);
                         #[cfg(windows)]
                         if let Ok(hwnd) = window.hwnd() {
                             unsafe {
@@ -1009,19 +1001,14 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
                                         HWND(hwnd.0),
                                         GWL_EXSTYLE,
                                     );
-                                let next = if user_pinned {
-                                    ex_style | WS_EX_NOACTIVATE.0 as isize
-                                } else {
-                                    ex_style & !(WS_EX_NOACTIVATE.0 as isize)
-                                };
-                                let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(
-                                    HWND(hwnd.0),
-                                    GWL_EXSTYLE,
-                                    next,
-                                );
+                                let _ =
+                                    windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(
+                                        HWND(hwnd.0),
+                                        GWL_EXSTYLE,
+                                        ex_style & !(WS_EX_NOACTIVATE.0 as isize),
+                                    );
                             }
                         }
-                        let _ = app_handle.emit("window-pinned-changed", user_pinned);
                     }
                 }
             }
@@ -1582,6 +1569,10 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             }
             api.prevent_close();
             let _ = window.hide();
+            CURRENT_DOCK.store(0, Ordering::Relaxed);
+            if !WINDOW_PINNED.load(Ordering::Relaxed) {
+                let _ = window.set_always_on_top(false);
+            }
             NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
             NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
         }

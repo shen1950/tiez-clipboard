@@ -13,9 +13,13 @@ interface SettingsNavigationProps {
     active: string;
     onSelect: (id: string) => void;
     label: string;
+    appLogo: string;
+    appVersion: string;
+    pageTitle: string;
+    windowControls: ReactNode;
 }
 
-export default function SettingsNavigation({ categories, active, onSelect, label }: SettingsNavigationProps) {
+export default function SettingsNavigation({ categories, active, onSelect, label, appLogo, appVersion, pageTitle, windowControls }: SettingsNavigationProps) {
     // Keep visited pages mounted so switching categories preserves drafts and scroll.
     const [visited, setVisited] = useState(() => new Set([active]));
     useEffect(() => {
@@ -26,23 +30,45 @@ export default function SettingsNavigation({ categories, active, onSelect, label
     return (
         <div className="settings-layout">
             <nav className="settings-sidebar" aria-label={label}>
-                {categories.map(({ id, label: title, icon: Icon }) => (
-                    <button
-                        key={id}
-                        type="button"
-                        className="settings-category"
-                        aria-current={id === current.id ? "page" : undefined}
-                        aria-controls={`settings-section-${id}`}
-                        onClick={() => onSelect(id)}
-                    >
-                        <Icon size={17} aria-hidden />
-                        <span>{title}</span>
-                    </button>
-                ))}
+                <div className="settings-sidebar-brand" data-tauri-drag-region>
+                    {appLogo ? (
+                        <img
+                            src={appLogo}
+                            alt="TieZ-GuLing"
+                            className="settings-sidebar-logo"
+                            draggable={false}
+                            onDragStart={(e) => e.preventDefault()}
+                        />
+                    ) : (
+                        <span className="settings-sidebar-logo settings-sidebar-logo-placeholder" aria-hidden />
+                    )}
+                    <div className="settings-sidebar-brand-text">
+                        <span className="settings-sidebar-brand-name">TieZ-GuLing</span>
+                        {appVersion ? (
+                            <span className="settings-sidebar-brand-version">v{appVersion}</span>
+                        ) : null}
+                    </div>
+                </div>
+                <div className="settings-sidebar-menu">
+                    {categories.map(({ id, label: title, icon: Icon }) => (
+                        <button
+                            key={id}
+                            type="button"
+                            className="settings-category"
+                            aria-current={id === current.id ? "page" : undefined}
+                            aria-controls={`settings-section-${id}`}
+                            onClick={() => onSelect(id)}
+                        >
+                            <Icon size={20} aria-hidden />
+                            <span>{title}</span>
+                        </button>
+                    ))}
+                </div>
             </nav>
             <div className="settings-detail">
-                <div className="settings-detail-heading">
-                    <h2 id="settings-category-title">{current.label}</h2>
+                <div className="settings-detail-header" data-tauri-drag-region>
+                    <h2 className="settings-detail-title">{pageTitle}</h2>
+                    {windowControls}
                 </div>
                 {categories.map(({ id, label: title, content }) => (
                     (visited.has(id) || current.id === id) && (

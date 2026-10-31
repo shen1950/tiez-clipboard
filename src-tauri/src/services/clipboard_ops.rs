@@ -421,6 +421,12 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
             let _ = window.set_focusable(false);
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    } else if crate::app::window_manager::collapse_to_edge_if_docked(app_handle) {
+        // Docked panel: retract into the edge sliver instead of vanishing.
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = window.set_focusable(false);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     } else {
         // In auto-hide mode, hide the window now
         if let Some(window) = app_handle.get_webview_window("main") {
@@ -919,6 +925,14 @@ async fn perform_paste_action(
 async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
     if crate::WINDOW_PINNED.load(Ordering::Relaxed) {
         // In pinned mode, keep window non-focusable and restore focus back to last app
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = window.set_focusable(false);
+        }
+        let _ = restore_focus_before_paste(app_handle).await;
+        return;
+    }
+
+    if crate::app::window_manager::collapse_to_edge_if_docked(app_handle) {
         if let Some(window) = app_handle.get_webview_window("main") {
             let _ = window.set_focusable(false);
         }

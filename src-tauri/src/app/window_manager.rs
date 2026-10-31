@@ -88,6 +88,7 @@ pub fn toggle_window(app: &AppHandle) {
             let _ = restore_last_focus(app.clone());
 
             IS_HIDDEN.store(false, Ordering::Relaxed);
+            CURRENT_DOCK.store(0, Ordering::Relaxed);
             NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
             NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
             return;
@@ -429,9 +430,68 @@ pub fn dismiss_clipboard_window(app_handle: &AppHandle) {
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.set_focusable(false);
         let _ = window.hide();
+        CURRENT_DOCK.store(0, Ordering::Relaxed);
+        if !WINDOW_PINNED.load(Ordering::Relaxed) {
+            let _ = window.set_always_on_top(false);
+        }
         NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
         NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
     }
+}
+
+/// Slide the window back into the edge slot it is docked to instead of hiding it.
+/// Used by every passive dismissal (paste, click elsewhere) so a panel that was
+/// pulled out of the edge sliver retracts again instead of disappearing.
+/// Returns true when the window is docked and was collapsed.
+pub fn collapse_to_edge_if_docked(app_handle: &AppHandle) -> bool {
+    let dock = CURRENT_DOCK.load(Ordering::Relaxed);
+    if dock == 0 {
+        return false;
+    }
+    let Some(settings) = app_handle.try_state::<SettingsState>() else {
+        return false;
+    };
+    if !settings.edge_docking.load(Ordering::Relaxed) {
+        CURRENT_DOCK.store(0, Ordering::Relaxed);
+        return false;
+    }
+    let Some(window) = app_handle.get_webview_window("main") else {
+        return false;
+    };
+    let Ok(size) = window.outer_size() else {
+        return false;
+    };
+    let Ok(position) = window.outer_position() else {
+        return false;
+    };
+    let Some(monitor) = window.current_monitor().ok().flatten() else {
+        return false;
+    };
+
+    let monitor_pos = monitor.position();
+    let monitor_size = monitor.size();
+    let screen_left = monitor_pos.x;
+    let screen_top = monitor_pos.y;
+    let screen_right = screen_left + monitor_size.width as i32;
+    let window_width = size.width as i32;
+    let window_height = size.height as i32;
+    let hide_size = 3;
+
+    let target = match dock {
+        1 => (position.x, screen_top - window_height + hide_size),
+        2 => (screen_left - window_width + hide_size, position.y),
+        3 => (screen_right - hide_size, position.y),
+        _ => return false,
+    };
+
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+        x: target.0,
+        y: target.1,
+    }));
+    // The visible 3px sliver has to stay above other windows while collapsed.
+    let _ = window.set_always_on_top(true);
+    IS_HIDDEN.store(true, Ordering::Relaxed);
+    true
 }
 
 #[tauri::command]
